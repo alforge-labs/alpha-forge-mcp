@@ -1,6 +1,7 @@
 """alpha-forge-mcp の MCP サーバ（stdio）。
 
-FastMCP に MVP の 5 tool（read 4 + run_backtest）を登録する。各 tool は
+FastMCP に 7 tool（read 4 + run_backtest + run_optimize + generate_pinescript）を
+登録する。各 tool は
 ``ForgeClient`` を介して forge バイナリを subprocess で呼ぶ。``ForgeClient`` は
 遅延生成し、forge 未検出/未認証時は ``ForgeError`` として FastMCP 経由でクライアント
 へエラーを返す（import や起動自体は妨げない＝IDE 側で扱いやすい）。

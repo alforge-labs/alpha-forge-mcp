@@ -36,3 +36,17 @@ def test_run_backtestのスキーマにsymbolとstrategy_idが必須() -> None:
     by_name = {t.name: t for t in tools}
     required = set(by_name["run_backtest"].inputSchema.get("required", []))
     assert {"symbol", "strategy_id"}.issubset(required)
+
+
+def test_run_optimizeのスキーマにsymbolとstrategy_idが必須() -> None:
+    tools = asyncio.run(mcp.list_tools())
+    by_name = {t.name: t for t in tools}
+    required = set(by_name["run_optimize"].inputSchema.get("required", []))
+    assert {"symbol", "strategy_id"}.issubset(required)
+
+
+def test_generate_pinescriptのスキーマにstrategy_idが必須() -> None:
+    tools = asyncio.run(mcp.list_tools())
+    by_name = {t.name: t for t in tools}
+    schema = by_name["generate_pinescript"].inputSchema
+    assert "strategy_id" in schema.get("required", [])

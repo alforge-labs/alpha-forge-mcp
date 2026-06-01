@@ -235,7 +235,8 @@ class ForgeClient:
             "--strategy",
             _validate_identifier(strategy_id),
         ]
-        if metric:
+        # 空文字を None と区別し、metric="" は検証で弾く（サイレント省略を避ける）。
+        if metric is not None:
             args += ["--metric", _validate_identifier(metric)]
         if trials is not None:
             args += ["--trials", _validate_positive_int(trials, "trials")]
@@ -250,8 +251,9 @@ class ForgeClient:
         本文を stdout に出す ``pine preview`` を用いる。戻り値は
         ``{"strategy_id": ..., "pinescript": <Pine v6 ソース>}``。
         """
-        args = ["pine", "preview", "--strategy", _validate_identifier(strategy_id)]
+        validated_id = _validate_identifier(strategy_id)
+        args = ["pine", "preview", "--strategy", validated_id]
         if with_webhook:
             args.append("--with-webhook")
         script = self._call_text(args)
-        return {"strategy_id": strategy_id, "pinescript": script}
+        return {"strategy_id": validated_id, "pinescript": script}
