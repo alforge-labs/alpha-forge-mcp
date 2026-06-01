@@ -62,6 +62,23 @@ def run_backtest(
     return _get_client().run_backtest(symbol, strategy_id, start=start, end=end)
 
 
+@mcp.tool()
+def run_optimize(
+    symbol: str,
+    strategy_id: str,
+    metric: str | None = None,
+    trials: int | None = None,
+) -> Any:
+    """Optimize strategy parameters with Optuna for `symbol`. metric defaults to sharpe_ratio."""
+    return _get_client().run_optimize(symbol, strategy_id, metric=metric, trials=trials)
+
+
+@mcp.tool()
+def generate_pinescript(strategy_id: str, with_webhook: bool = False) -> Any:
+    """Generate TradingView Pine Script v6 for a strategy. Returns {strategy_id, pinescript}."""
+    return _get_client().generate_pinescript(strategy_id, with_webhook=with_webhook)
+
+
 def main() -> None:
     """stdio トランスポートで MCP サーバを起動する（``uvx alpha-forge-mcp`` のエントリ）。"""
     mcp.run(transport="stdio")

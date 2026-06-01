@@ -12,10 +12,12 @@ _EXPECTED = {
     "list_results",
     "get_result",
     "run_backtest",
+    "run_optimize",
+    "generate_pinescript",
 }
 
 
-def test_MVPの5toolが登録される() -> None:
+def test_全toolが登録される() -> None:
     tools = asyncio.run(mcp.list_tools())
     names = {t.name for t in tools}
     assert _EXPECTED.issubset(names), names
