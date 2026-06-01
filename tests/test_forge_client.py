@@ -152,3 +152,72 @@ class TestToolArgs:
         with pytest.raises(ForgeError) as exc:
             ForgeClient(forge_bin="/fake/forge").run_backtest("AAPL", "sma_v1", start="bad")
         assert exc.value.code == "invalid_argument"
+
+    def test_run_optimize(self) -> None:
+        cmd = self._capture(
+            lambda c: c.run_optimize("AAPL", "sma_v1", metric="sharpe_ratio", trials=50)
+        )
+        assert cmd == [
+            "/fake/forge",
+            "optimize",
+            "run",
+            "AAPL",
+            "--strategy",
+            "sma_v1",
+            "--metric",
+            "sharpe_ratio",
+            "--trials",
+            "50",
+            "--json",
+        ]
+
+    def test_run_optimize_最小引数(self) -> None:
+        cmd = self._capture(lambda c: c.run_optimize("AAPL", "sma_v1"))
+        assert cmd == [
+            "/fake/forge",
+            "optimize",
+            "run",
+            "AAPL",
+            "--strategy",
+            "sma_v1",
+            "--json",
+        ]
+
+    @pytest.mark.parametrize("bad", [0, -1, True, 1.5, "50"])
+    def test_run_optimize_不正なtrialsを拒否する(self, bad) -> None:
+        # 0/負/非int を拒否。bool は int サブクラスだが除外する（True==1 を弾く）。
+        with pytest.raises(ForgeError) as exc:
+            ForgeClient(forge_bin="/fake/forge").run_optimize("AAPL", "sma_v1", trials=bad)
+        assert exc.value.code == "invalid_argument"
+
+    def test_run_optimize_空metricを拒否する(self) -> None:
+        # metric="" はサイレント省略でなく invalid_argument として弾く（is not None 判定）。
+        with pytest.raises(ForgeError) as exc:
+            ForgeClient(forge_bin="/fake/forge").run_optimize("AAPL", "sma_v1", metric="")
+        assert exc.value.code == "invalid_argument"
+
+    def test_generate_pinescript_preview経由でjson無しで本文を返す(self) -> None:
+        with patch("alpha_forge_mcp.forge_client.subprocess.run") as run:
+            run.return_value = _completed(stdout="//@version=6\nindicator('x')\n")
+            out = ForgeClient(forge_bin="/fake/forge").generate_pinescript("sma_v1")
+        cmd = run.call_args.args[0]
+        # pine preview は本文（非 JSON）を stdout に出すため --json は付けない
+        assert cmd == ["/fake/forge", "pine", "preview", "--strategy", "sma_v1"]
+        assert "--json" not in cmd
+        assert out == {
+            "strategy_id": "sma_v1",
+            "pinescript": "//@version=6\nindicator('x')\n",
+        }
+
+    def test_generate_pinescript_with_webhook(self) -> None:
+        with patch("alpha_forge_mcp.forge_client.subprocess.run") as run:
+            run.return_value = _completed(stdout="//@version=6\n")
+            ForgeClient(forge_bin="/fake/forge").generate_pinescript("sma_v1", with_webhook=True)
+        assert run.call_args.args[0] == [
+            "/fake/forge",
+            "pine",
+            "preview",
+            "--strategy",
+            "sma_v1",
+            "--with-webhook",
+        ]

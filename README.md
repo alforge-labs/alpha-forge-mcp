@@ -20,8 +20,11 @@ logic — `forge` plus a valid license are required for anything to actually run
 | `list_results` | List saved backtest results | `forge backtest list [--strategy <id>] --json` |
 | `get_result` | Metrics & trades of one result | `forge backtest report <result_id> --json` |
 | `run_backtest` | Run a backtest | `forge backtest run <symbol> --strategy <id> --json` |
+| `run_optimize` | Optimize parameters (Optuna) | `forge optimize run <symbol> --strategy <id> [--metric] [--trials] --json` |
+| `generate_pinescript` | Generate Pine Script v6 source | `forge pine preview --strategy <id> [--with-webhook]` |
 
-`run_optimize` / `generate_pinescript` are planned for the next release.
+Streamable HTTP transport, RBAC, rate limiting, and audit logging are planned for a later
+release.
 
 ## Prerequisites
 

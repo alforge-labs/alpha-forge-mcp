@@ -27,6 +27,7 @@ from alpha_forge_mcp.errors import ForgeError, ForgeNotFoundError
 
 _DEFAULT_TIMEOUT = 30.0
 _BACKTEST_TIMEOUT = 300.0
+_OPTIMIZE_TIMEOUT = 600.0
 
 # 識別子（symbol / strategy_id / result_id）の許容文字。
 # 先頭は英数字または ``^``（指数: ^VIX 等）。先頭ハイフンを禁止して forge への
@@ -93,6 +94,13 @@ def _validate_date(value: str) -> str:
     return value
 
 
+def _validate_positive_int(value: object, name: str = "value") -> str:
+    """正の整数を検証して文字列で返す。不正なら ForgeError（bool は除外）。"""
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ForgeError("invalid_argument", f"{name} must be a positive integer: {value!r}")
+    return str(value)
+
+
 class ForgeClient:
     """forge バイナリを ``--json`` で叩く薄いクライアント。"""
 
@@ -107,14 +115,26 @@ class ForgeClient:
             )
         self.forge_bin: str = resolved
 
-    def _call(self, args: list[str], *, timeout: float = _DEFAULT_TIMEOUT) -> Any:
-        """``forge <args> --json`` を実行し、パースした JSON を返す。
+    def _run(
+        self,
+        args: list[str],
+        *,
+        json_output: bool,
+        timeout: float = _DEFAULT_TIMEOUT,
+    ) -> Any:
+        """``forge <args> [--json]`` を実行する共通処理。
+
+        Args:
+            json_output: True なら ``--json`` を付与し stdout を JSON パースして返す。
+                False なら stdout を生テキスト（str）で返す（例: ``pine preview``）。
 
         Raises:
             ForgeError: 実行失敗 / タイムアウト / 非ゼロ終了 / JSON パース失敗。
         """
         # shell=False + 引数 list で固定（シェルを介さずインジェクション不可）。
-        cmd = [self.forge_bin, *args, "--json"]
+        cmd = [self.forge_bin, *args]
+        if json_output:
+            cmd.append("--json")
         try:
             proc = subprocess.run(
                 cmd,
@@ -139,12 +159,22 @@ class ForgeClient:
                 f"`forge {' '.join(args)}` failed (exit {proc.returncode}): {detail}",
             )
 
+        if not json_output:
+            return proc.stdout
         try:
             return json.loads(proc.stdout)
         except json.JSONDecodeError as exc:
             raise ForgeError(
                 "bad_output", f"failed to parse forge --json output: {exc}"
             ) from exc
+
+    def _call(self, args: list[str], *, timeout: float = _DEFAULT_TIMEOUT) -> Any:
+        """``forge <args> --json`` を実行し、パースした JSON を返す。"""
+        return self._run(args, json_output=True, timeout=timeout)
+
+    def _call_text(self, args: list[str], *, timeout: float = _DEFAULT_TIMEOUT) -> str:
+        """``forge <args>`` を実行し stdout を生テキストで返す（``--json`` なし）。"""
+        return self._run(args, json_output=False, timeout=timeout)
 
     # ------------------------------------------------------------------
     # tool 実装（forge CLI コマンドへの 1:1 マッピング・スペックで検証済み）
@@ -189,3 +219,41 @@ class ForgeClient:
         if end:
             args += ["--end", _validate_date(end)]
         return self._call(args, timeout=_BACKTEST_TIMEOUT)
+
+    def run_optimize(
+        self,
+        symbol: str,
+        strategy_id: str,
+        metric: str | None = None,
+        trials: int | None = None,
+    ) -> Any:
+        """``forge optimize run <symbol> --strategy <id> [--metric ..] [--trials ..] --json``"""
+        args = [
+            "optimize",
+            "run",
+            _validate_identifier(symbol),
+            "--strategy",
+            _validate_identifier(strategy_id),
+        ]
+        # 空文字を None と区別し、metric="" は検証で弾く（サイレント省略を避ける）。
+        if metric is not None:
+            args += ["--metric", _validate_identifier(metric)]
+        if trials is not None:
+            args += ["--trials", _validate_positive_int(trials, "trials")]
+        return self._call(args, timeout=_OPTIMIZE_TIMEOUT)
+
+    def generate_pinescript(
+        self, strategy_id: str, with_webhook: bool = False
+    ) -> dict[str, str]:
+        """``forge pine preview --strategy <id> [--with-webhook]``（Pine 本文を取得）。
+
+        ``pine generate`` はファイル出力でパス表示のみ・stdout に本文を出さないため、
+        本文を stdout に出す ``pine preview`` を用いる。戻り値は
+        ``{"strategy_id": ..., "pinescript": <Pine v6 ソース>}``。
+        """
+        validated_id = _validate_identifier(strategy_id)
+        args = ["pine", "preview", "--strategy", validated_id]
+        if with_webhook:
+            args.append("--with-webhook")
+        script = self._call_text(args)
+        return {"strategy_id": validated_id, "pinescript": script}
