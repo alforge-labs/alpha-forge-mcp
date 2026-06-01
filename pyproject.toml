@@ -1,0 +1,56 @@
+[project]
+name = "alpha-forge-mcp"
+version = "0.1.0a1"
+description = "MCP server (stdio) exposing the AlphaForge `forge` CLI to Claude Code / Cursor / Codex"
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.11"
+authors = [{ name = "AlForge Labs" }]
+keywords = [
+    "mcp",
+    "model-context-protocol",
+    "alpha-forge",
+    "backtesting",
+    "trading",
+    "quant",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Office/Business :: Financial :: Investment",
+]
+dependencies = ["mcp>=1.27.1"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "ruff>=0.6"]
+
+[project.scripts]
+alpha-forge-mcp = "alpha_forge_mcp.server:main"
+
+[project.urls]
+Homepage = "https://alforge-labs.github.io/"
+Repository = "https://github.com/alforge-labs/alpha-forge-mcp"
+Issues = "https://github.com/alforge-labs/alpha-forge-mcp/issues"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/alpha_forge_mcp"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
