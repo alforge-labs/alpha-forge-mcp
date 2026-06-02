@@ -11,7 +11,7 @@ It is a thin **open-source wrapper**: it shells out to the (commercial, closed-s
 binary with `--json` and returns the parsed result. The MCP server itself contains no core
 logic — `forge` plus a valid license are required for anything to actually run.
 
-## Tools (MVP)
+## Tools
 
 | Tool | What it does | Underlying command |
 |------|--------------|--------------------|
@@ -19,7 +19,7 @@ logic — `forge` plus a valid license are required for anything to actually run
 | `get_strategy` | Full JSON of one strategy | `forge strategy show <id> --json` |
 | `list_results` | List saved backtest results | `forge backtest list [--strategy <id>] --json` |
 | `get_result` | Metrics & trades of one result | `forge backtest report <result_id> --json` |
-| `run_backtest` | Run a backtest | `forge backtest run <symbol> --strategy <id> --json` |
+| `run_backtest` | Run a backtest | `forge backtest run <symbol> --strategy <id> [--start] [--end] --json` |
 | `run_optimize` | Optimize parameters (Optuna) | `forge optimize run <symbol> --strategy <id> [--metric] [--trials] --json` |
 | `generate_pinescript` | Generate Pine Script v6 source | `forge pine preview --strategy <id> [--with-webhook]` |
 
@@ -86,7 +86,7 @@ If `forge` is installed at a non-standard location, pass it via env:
 
 ## Troubleshooting
 
-- **`forge binary not found`** — ensure `forge`/`alpha-forge` is on `PATH`, or set
+- **`forge_not_found`** — ensure `forge`/`alpha-forge` is on `PATH`, or set
   `ALPHA_FORGE_BIN=/path/to/forge`.
 - **`authentication_required`** — run `forge system auth login`. The MCP server does not
   store credentials; it relies on `forge`'s own auth.
