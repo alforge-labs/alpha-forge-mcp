@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import subprocess
+import sys
 
 from alpha_forge_mcp.server import mcp
 
@@ -21,6 +24,54 @@ def test_全toolが登録される() -> None:
     tools = asyncio.run(mcp.list_tools())
     names = {t.name for t in tools}
     assert _EXPECTED.issubset(names), names
+
+
+def test_serverInfoのversionが自パッケージ版と一致する() -> None:
+    # issue #3: 未指定だと FastMCP がライブラリ（mcp）自身の版を返してしまう。
+    from importlib.metadata import version
+
+    opts = mcp._mcp_server.create_initialization_options()
+    assert opts.server_version == version("alpha-forge-mcp")
+
+
+def test_serverInfoのnameがパッケージ名と一致する() -> None:
+    # issue #3: PyPI パッケージ名 alpha-forge-mcp と serverInfo.name を揃える。
+    opts = mcp._mcp_server.create_initialization_options()
+    assert opts.server_name == "alpha-forge-mcp"
+
+
+def test_stdioのinitialize応答が自パッケージのserverInfoを返す() -> None:
+    """stdio JSON-RPC でサーバを実起動し initialize 応答を E2E 検証する（issue #3）。
+
+    initialize のみで完結し forge バイナリには触れないため CI でも動く。
+    """
+    from importlib.metadata import version
+
+    req = (
+        json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {},
+                    "clientInfo": {"name": "test", "version": "0"},
+                },
+            }
+        )
+        + "\n"
+    )
+    proc = subprocess.run(
+        [sys.executable, "-m", "alpha_forge_mcp"],
+        input=req,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    info = json.loads(proc.stdout.splitlines()[0])["result"]["serverInfo"]
+    assert info["name"] == "alpha-forge-mcp", info
+    assert info["version"] == version("alpha-forge-mcp"), info
 
 
 def test_get_strategyのスキーマにstrategy_idが必須で含まれる() -> None:
