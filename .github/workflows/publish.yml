@@ -18,9 +18,9 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v8
       - name: Run tests & lint
         run: |
           uv sync --extra dev
@@ -29,14 +29,17 @@ jobs:
 
   publish:
     needs: test
+    # workflow_dispatch（CI 動作検証用）では publish をスキップする。
+    # 公開済みバージョンの再アップロードは PyPI に拒否され必ず失敗するため。
+    if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
       id-token: write  # Trusted Publishing に必須
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v8
       - name: Build distribution
         run: uv build
       - name: Publish to PyPI (Trusted Publishing)
