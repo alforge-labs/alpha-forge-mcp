@@ -23,6 +23,20 @@ def test_全toolが登録される() -> None:
     assert _EXPECTED.issubset(names), names
 
 
+def test_serverInfoのversionが自パッケージ版と一致する() -> None:
+    # issue #3: 未指定だと FastMCP がライブラリ（mcp）自身の版を返してしまう。
+    from importlib.metadata import version
+
+    opts = mcp._mcp_server.create_initialization_options()
+    assert opts.server_version == version("alpha-forge-mcp")
+
+
+def test_serverInfoのnameがパッケージ名と一致する() -> None:
+    # issue #3: PyPI パッケージ名 alpha-forge-mcp と serverInfo.name を揃える。
+    opts = mcp._mcp_server.create_initialization_options()
+    assert opts.server_name == "alpha-forge-mcp"
+
+
 def test_get_strategyのスキーマにstrategy_idが必須で含まれる() -> None:
     tools = asyncio.run(mcp.list_tools())
     by_name = {t.name: t for t in tools}
