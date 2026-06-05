@@ -20,7 +20,8 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Install uv
-        uses: astral-sh/setup-uv@v8
+        # v8 系はメジャータグ未提供（v8.x.y のフルタグのみ）のためフル固定
+        uses: astral-sh/setup-uv@v8.2.0
       - name: Run tests & lint
         run: |
           uv sync --extra dev
@@ -39,7 +40,8 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Install uv
-        uses: astral-sh/setup-uv@v8
+        # v8 系はメジャータグ未提供（v8.x.y のフルタグのみ）のためフル固定
+        uses: astral-sh/setup-uv@v8.2.0
       - name: Build distribution
         run: uv build
       - name: Publish to PyPI (Trusted Publishing)
