@@ -101,6 +101,31 @@ def _validate_positive_int(value: object, name: str = "value") -> str:
     return str(value)
 
 
+def _normalize_strategy_row(row: dict[str, Any]) -> dict[str, Any]:
+    """``list_strategies`` の 1 行を正規化する（issue #4 の暫定対応）。
+
+    forge CLI（repository の ``list_all``）は ``tags`` を JSON 文字列・
+    ``created_at``/``updated_at`` を空文字で返すことがある（根本原因は
+    upstream の alpha-forge 側）。構造化データとして妥当な形（tags=配列・
+    空タイムスタンプ=None）に直して返す。元 dict は変異させない。
+    upstream 修正後も無害（既に配列/非空なら何もしない）。
+    """
+    normalized = dict(row)
+    tags = normalized.get("tags")
+    if isinstance(tags, str):
+        try:
+            parsed = json.loads(tags)
+        except json.JSONDecodeError:
+            parsed = None
+        # list 以外（'"x"' 等の正当な JSON）は安全側でそのまま残す。
+        if isinstance(parsed, list):
+            normalized["tags"] = parsed
+    for key in ("created_at", "updated_at"):
+        if normalized.get(key) == "":
+            normalized[key] = None
+    return normalized
+
+
 class ForgeClient:
     """forge バイナリを ``--json`` で叩く薄いクライアント。"""
 
@@ -181,8 +206,18 @@ class ForgeClient:
     # ------------------------------------------------------------------
 
     def list_strategies(self) -> Any:
-        """``forge strategy list --json``"""
-        return self._call(["strategy", "list"])
+        """``forge strategy list --json``（strategies 行を正規化して返す）"""
+        data = self._call(["strategy", "list"])
+        # 想定外の応答形はそのまま返す（薄いラッパー方針を維持）。
+        if isinstance(data, dict) and isinstance(data.get("strategies"), list):
+            return {
+                **data,
+                "strategies": [
+                    _normalize_strategy_row(r) if isinstance(r, dict) else r
+                    for r in data["strategies"]
+                ],
+            }
+        return data
 
     def get_strategy(self, strategy_id: str) -> Any:
         """``forge strategy show <strategy_id> --json``"""

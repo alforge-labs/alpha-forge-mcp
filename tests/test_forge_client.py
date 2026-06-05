@@ -221,3 +221,84 @@ class TestToolArgs:
             "sma_v1",
             "--with-webhook",
         ]
+
+
+class TestListStrategiesNormalization:
+    """issue #4: list_strategies 応答の暫定正規化（tags / タイムスタンプ）。
+
+    forge CLI は tags を JSON 文字列・created_at/updated_at を空文字で返す
+    ことがある（根本原因は upstream の repository.list_all）。MCP 側で
+    構造化データとして妥当な形に正規化することを検証する。
+    """
+
+    def _list_with(self, payload: dict):
+        with patch("alpha_forge_mcp.forge_client.subprocess.run") as run:
+            run.return_value = _completed(stdout=json.dumps(payload))
+            return ForgeClient(forge_bin="/fake/forge").list_strategies()
+
+    def test_JSON文字列のtagsを配列に復元する(self) -> None:
+        out = self._list_with(
+            {
+                "strategies": [
+                    {"strategy_id": "s1", "tags": '["e2e", "sma", "trend"]'}
+                ],
+                "count": 1,
+            }
+        )
+        assert out["strategies"][0]["tags"] == ["e2e", "sma", "trend"]
+
+    def test_既に配列のtagsはそのまま返す(self) -> None:
+        out = self._list_with(
+            {"strategies": [{"strategy_id": "s1", "tags": ["a", "b"]}], "count": 1}
+        )
+        assert out["strategies"][0]["tags"] == ["a", "b"]
+
+    def test_パース不能なtags文字列はそのまま残す(self) -> None:
+        out = self._list_with(
+            {"strategies": [{"strategy_id": "s1", "tags": '["broken'}], "count": 1}
+        )
+        assert out["strategies"][0]["tags"] == '["broken'
+
+    def test_list以外にパースされるtags文字列はそのまま残す(self) -> None:
+        out = self._list_with(
+            {"strategies": [{"strategy_id": "s1", "tags": '"x"'}], "count": 1}
+        )
+        assert out["strategies"][0]["tags"] == '"x"'
+
+    def test_空文字タイムスタンプをNoneに正規化する(self) -> None:
+        out = self._list_with(
+            {
+                "strategies": [
+                    {"strategy_id": "s1", "created_at": "", "updated_at": ""}
+                ],
+                "count": 1,
+            }
+        )
+        row = out["strategies"][0]
+        assert row["created_at"] is None
+        assert row["updated_at"] is None
+
+    def test_非空タイムスタンプはそのまま返す(self) -> None:
+        ts = "2026-06-06T00:00:00+00:00"
+        out = self._list_with(
+            {
+                "strategies": [
+                    {"strategy_id": "s1", "created_at": ts, "updated_at": ts}
+                ],
+                "count": 1,
+            }
+        )
+        row = out["strategies"][0]
+        assert row["created_at"] == ts
+        assert row["updated_at"] == ts
+
+    def test_countなど他のキーは保持される(self) -> None:
+        out = self._list_with(
+            {"strategies": [{"strategy_id": "s1", "tags": "[]"}], "count": 1}
+        )
+        assert out["count"] == 1
+        assert out["strategies"][0]["tags"] == []
+
+    def test_strategiesキーが無い応答はそのまま返す(self) -> None:
+        out = self._list_with({"error": "unexpected"})
+        assert out == {"error": "unexpected"}
