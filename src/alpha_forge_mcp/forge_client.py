@@ -29,6 +29,64 @@ _DEFAULT_TIMEOUT = 30.0
 _BACKTEST_TIMEOUT = 300.0
 _OPTIMIZE_TIMEOUT = 600.0
 
+# forge の Trial/freemium ブロックは Rich パネル（exit 1・stdout）で返る
+# （コア側 _helpers.py の「🔒 有料プラン限定機能 / Premium-only feature」パネル）。
+_FREEMIUM_MARKERS = ("有料プラン限定", "Premium-only feature")
+# Rich パネルの罫線（Unicode Box Drawing ブロック U+2500-257F）。
+# AI クライアント向けの人間可読メッセージからは除去する。
+_RICH_BOX_RE = re.compile(r"[─-╿]+")
+
+
+def _strip_rich_decoration(text: str) -> str:
+    """Rich パネルの罫線を除き、行内の余分な空白を畳んだテキストを返す。"""
+    lines = []
+    for line in _RICH_BOX_RE.sub(" ", text).splitlines():
+        collapsed = " ".join(line.split())
+        if collapsed:
+            lines.append(collapsed)
+    return "\n".join(lines)
+
+
+def _classify_failure(args: list[str], proc: subprocess.CompletedProcess) -> ForgeError:
+    """非ゼロ終了の subprocess 結果を ForgeError に分類する (#12)。
+
+    優先順:
+    1. stdout の構造化エラー JSON（``--json`` 時に forge が返す
+       ``{"error": ..., "code": "strategy_not_found", "id": ...}``）の
+       ``code`` をそのまま passthrough する。detail も stdout の
+       ``error`` フィールドを優先する（stderr の Trial バナーで
+       上書きしない）。
+    2. Trial/freemium ブロック（Rich パネル）→ ``freemium_blocked``。
+       罫線を除いた本文を detail にする。
+    3. それ以外 → ``execution_failed``。
+
+    旧実装は exit code 2 を一律 ``authentication_required`` に写像していたが、
+    exit 2 は多義（Click の usage error / not-found 系も 2）で、forge が
+    stdout に返す正しい code を握りつぶし AI クライアントを無意味な
+    ``auth login`` へ誘導していた。forge 自身が ``authentication_required``
+    を構造化 JSON で返す場合は 1. の passthrough で正しく伝播する。
+    """
+    stdout = (proc.stdout or "").strip()
+    stderr = (proc.stderr or "").strip()
+    prefix = f"`forge {' '.join(args)}` failed (exit {proc.returncode})"
+
+    body: Any = None
+    if stdout:
+        try:
+            body = json.loads(stdout)
+        except json.JSONDecodeError:
+            body = None
+    if isinstance(body, dict) and isinstance(body.get("code"), str):
+        error_msg = body.get("error")
+        detail = error_msg if isinstance(error_msg, str) and error_msg else stdout
+        return ForgeError(body["code"], f"{prefix}: {detail}")
+
+    if any(marker in stdout or marker in stderr for marker in _FREEMIUM_MARKERS):
+        detail = _strip_rich_decoration(stdout or stderr)
+        return ForgeError("freemium_blocked", f"{prefix}: {detail}")
+
+    return ForgeError("execution_failed", f"{prefix}: {stderr or stdout}")
+
 # 識別子（symbol / strategy_id / result_id）の許容文字。
 # 先頭は英数字または ``^``（指数: ^VIX 等）。先頭ハイフンを禁止して forge への
 # 引数注入（値が ``--flag`` と解釈される）を防ぐ。shell=False と併せて安全側に倒す。
@@ -176,13 +234,9 @@ class ForgeClient:
             raise ForgeError("execution_failed", f"failed to execute forge: {exc}") from exc
 
         if proc.returncode != 0:
-            detail = (proc.stderr or proc.stdout or "").strip()
-            # forge は未認証時に exit code 2 を返す（commands/auth.py 準拠）。
-            code = "authentication_required" if proc.returncode == 2 else "execution_failed"
-            raise ForgeError(
-                code,
-                f"`forge {' '.join(args)}` failed (exit {proc.returncode}): {detail}",
-            )
+            # #12: 一律の exit code 写像はせず、stdout の構造化エラー JSON /
+            # freemium パネル / その他 の順で分類する。
+            raise _classify_failure(args, proc)
 
         if not json_output:
             return proc.stdout
