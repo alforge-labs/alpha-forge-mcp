@@ -1,35 +1,36 @@
 # alpha-forge-mcp
 
 A [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server that exposes the
-**AlphaForge `forge` CLI** to AI coding agents — Claude Code, Cursor, Codex, and any
+**AlphaForge `alpha-forge` CLI** to AI coding agents — Claude Code, Cursor, Codex, and any
 MCP-capable client — over **stdio**.
 
 > ⚠️ **Pre-release / Alpha (`0.1.0aN`).** Tool signatures and return formats may change
 > without notice. Not recommended for production automation yet. Feedback welcome via Issues.
 
-It is a thin **open-source wrapper**: it shells out to the (commercial, closed-source) `forge`
-binary with `--json` and returns the parsed result. The MCP server itself contains no core
-logic — `forge` plus a valid license are required for anything to actually run.
+It is a thin **open-source wrapper**: it shells out to the (commercial, closed-source)
+`alpha-forge` binary with `--json` and returns the parsed result. The MCP server itself
+contains no core logic — `alpha-forge` plus a valid license are required for anything to
+actually run.
 
 ## Tools
 
 | Tool | What it does | Underlying command |
 |------|--------------|--------------------|
-| `list_strategies` | List registered strategies | `forge strategy list --json` |
-| `get_strategy` | Full JSON of one strategy | `forge strategy show <id> --json` |
-| `list_results` | List saved backtest results | `forge backtest list [--strategy <id>] --json` |
-| `get_result` | Metrics & trades of one result | `forge backtest report <result_id> --json` |
-| `run_backtest` | Run a backtest | `forge backtest run <symbol> --strategy <id> [--start] [--end] --json` |
-| `run_optimize` | Optimize parameters (Optuna) | `forge optimize run <symbol> --strategy <id> [--metric] [--trials] --json` |
-| `generate_pinescript` | Generate Pine Script v6 source | `forge pine preview --strategy <id> [--with-webhook]` |
+| `list_strategies` | List registered strategies | `alpha-forge strategy list --json` |
+| `get_strategy` | Full JSON of one strategy | `alpha-forge strategy show <id> --json` |
+| `list_results` | List saved backtest results | `alpha-forge backtest list [--strategy <id>] --json` |
+| `get_result` | Metrics & trades of one result | `alpha-forge backtest report <result_id> --json` |
+| `run_backtest` | Run a backtest | `alpha-forge backtest run <symbol> --strategy <id> [--start] [--end] --json` |
+| `run_optimize` | Optimize parameters (Optuna) | `alpha-forge optimize run <symbol> --strategy <id> [--metric] [--trials] --json` |
+| `generate_pinescript` | Generate Pine Script v6 source | `alpha-forge pine preview --strategy <id> [--with-webhook]` |
 
 Streamable HTTP transport, RBAC, rate limiting, and audit logging are planned for a later
 release.
 
 ## Prerequisites
 
-1. The **`forge` binary** must be installed and on your `PATH` (or set `ALPHA_FORGE_BIN`).
-2. You must be **authenticated**: run `forge system auth login` once.
+1. The **`alpha-forge` binary** must be installed and on your `PATH` (or set `ALPHA_FORGE_BIN`).
+2. You must be **authenticated**: run `alpha-forge system auth login` once.
 3. Python **3.11+** (only needed if not using `uvx`).
 
 ## Install & run
@@ -48,7 +49,16 @@ pip install alpha-forge-mcp
 alpha-forge-mcp
 ```
 
-### Claude Code — `~/.claude/mcp.json`
+### Claude Code
+
+The easiest way is the `claude mcp add` command (user scope — available in every project):
+
+```bash
+claude mcp add --scope user alpha-forge -- uvx alpha-forge-mcp
+```
+
+Alternatively, add the server to a project-scoped `.mcp.json` at the repository root
+(checked in and shared with your team):
 
 ```json
 {
@@ -57,6 +67,10 @@ alpha-forge-mcp
   }
 }
 ```
+
+> Note: Claude Code does **not** read `~/.claude/mcp.json`. User-scoped servers are stored
+> in `~/.claude.json` (managed by `claude mcp add`); project-scoped servers live in
+> `.mcp.json` at the project root.
 
 ### Cursor / Codex
 
@@ -70,7 +84,7 @@ Use the same `command` / `args` in the client's MCP server configuration:
 }
 ```
 
-If `forge` is installed at a non-standard location, pass it via env:
+If `alpha-forge` is installed at a non-standard location, pass it via env:
 
 ```json
 {
@@ -78,7 +92,7 @@ If `forge` is installed at a non-standard location, pass it via env:
     "alpha-forge": {
       "command": "uvx",
       "args": ["alpha-forge-mcp"],
-      "env": { "ALPHA_FORGE_BIN": "/path/to/forge" }
+      "env": { "ALPHA_FORGE_BIN": "/path/to/alpha-forge" }
     }
   }
 }
@@ -86,10 +100,10 @@ If `forge` is installed at a non-standard location, pass it via env:
 
 ## Troubleshooting
 
-- **`forge_not_found`** — ensure `forge`/`alpha-forge` is on `PATH`, or set
-  `ALPHA_FORGE_BIN=/path/to/forge`.
-- **`authentication_required`** — run `forge system auth login`. The MCP server does not
-  store credentials; it relies on `forge`'s own auth.
+- **`forge_not_found`** — ensure `alpha-forge` (or legacy `forge`) is on `PATH`, or set
+  `ALPHA_FORGE_BIN=/path/to/alpha-forge`.
+- **`authentication_required`** — run `alpha-forge system auth login`. The MCP server does
+  not store credentials; it relies on `alpha-forge`'s own auth.
 
 ## Development
 
