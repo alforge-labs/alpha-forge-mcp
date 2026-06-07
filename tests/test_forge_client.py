@@ -87,12 +87,77 @@ class TestForgeCall:
                 self._client().list_strategies()
         assert exc.value.code == "execution_failed"
 
-    def test_exit2でauthentication_required(self) -> None:
+    def test_構造化エラーJSONのcodeをそのまま返す(self) -> None:
+        """#12: forge が stdout に返す構造化エラーの code を握りつぶさない。
+
+        旧実装は exit 2 を一律 authentication_required に写像し、
+        strategy_not_found 等を誤分類して AI クライアントを無意味な
+        auth login へ誘導していた。
+        """
+        body = {
+            "error": "戦略 'does_not_exist' が見つかりません",
+            "code": "strategy_not_found",
+            "id": "does_not_exist",
+        }
         with patch("alpha_forge_mcp.forge_client.subprocess.run") as run:
-            run.return_value = _completed(stderr="not authenticated", returncode=2)
+            run.return_value = _completed(
+                stdout=json.dumps(body, ensure_ascii=False),
+                stderr="⚠ Trial プランで実行中…",  # stderr バナーより stdout JSON を優先
+                returncode=2,
+            )
+            with pytest.raises(ForgeError) as exc:
+                self._client().get_strategy("does_not_exist")
+        assert exc.value.code == "strategy_not_found"
+        assert "見つかりません" in exc.value.message
+        assert "Trial プラン" not in exc.value.message
+
+    def test_構造化JSONのauthentication系codeもpassthroughされる(self) -> None:
+        """forge 自身が authentication_required を返す場合はそのまま伝播する。"""
+        body = {"error": "not authenticated", "code": "authentication_required"}
+        with patch("alpha_forge_mcp.forge_client.subprocess.run") as run:
+            run.return_value = _completed(stdout=json.dumps(body), returncode=2)
             with pytest.raises(ForgeError) as exc:
                 self._client().list_strategies()
         assert exc.value.code == "authentication_required"
+
+    def test_exit2でも構造化JSONが無ければexecution_failed(self) -> None:
+        """#12: exit 2 は多義 (Click usage error 等) なので auth とは断定しない。"""
+        with patch("alpha_forge_mcp.forge_client.subprocess.run") as run:
+            run.return_value = _completed(
+                stderr="Usage: forge strategy show [OPTIONS]\nError: No such option",
+                returncode=2,
+            )
+            with pytest.raises(ForgeError) as exc:
+                self._client().list_strategies()
+        assert exc.value.code == "execution_failed"
+
+    def test_有料プラン限定パネルはfreemium_blockedに分類する(self) -> None:
+        """#12: Trial の Pine ブロックは専用 code + Rich 罫線除去で返す。"""
+        panel = (
+            "╭─ 🔒 有料プラン限定機能 ─╮\n"
+            "│ Pine Script エクスポートは有料プランのみ │\n"
+            "│ アップグレード: https://example.com      │\n"
+            "╰──────────────────────╯"
+        )
+        with patch("alpha_forge_mcp.forge_client.subprocess.run") as run:
+            run.return_value = _completed(stdout=panel, returncode=1)
+            with pytest.raises(ForgeError) as exc:
+                self._client().generate_pinescript("sma_cross_qs")
+        assert exc.value.code == "freemium_blocked"
+        assert "有料プラン限定" in exc.value.message
+        # Rich パネルの罫線は人間可読メッセージから除去される
+        for box_char in ("╭", "│", "╰", "─"):
+            assert box_char not in exc.value.message
+
+    def test_英語版Premium_onlyパネルもfreemium_blocked(self) -> None:
+        with patch("alpha_forge_mcp.forge_client.subprocess.run") as run:
+            run.return_value = _completed(
+                stdout="╭─ 🔒 Premium-only feature ─╮\n│ Upgrade your license │\n╰─╯",
+                returncode=1,
+            )
+            with pytest.raises(ForgeError) as exc:
+                self._client().generate_pinescript("sma_cross_qs")
+        assert exc.value.code == "freemium_blocked"
 
     def test_タイムアウトでtimeout(self) -> None:
         with patch(

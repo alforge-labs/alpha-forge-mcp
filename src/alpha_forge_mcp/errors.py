@@ -11,8 +11,11 @@ class ForgeError(Exception):
     """forge コマンド実行に関する一般エラー。
 
     Args:
-        code: ``"timeout"`` / ``"execution_failed"`` / ``"authentication_required"`` /
-            ``"bad_output"`` / ``"invalid_argument"`` 等の機械可読な分類。
+        code: 機械可読な分類。MCP 側で生成するのは ``"timeout"`` /
+            ``"execution_failed"`` / ``"freemium_blocked"`` / ``"bad_output"`` /
+            ``"invalid_argument"`` / ``"forge_not_found"``。これに加え、forge が
+            ``--json`` の構造化エラーで返す code（``"strategy_not_found"`` /
+            ``"authentication_required"`` 等）はそのまま passthrough される (#12)。
         message: 人間可読なエラーメッセージ。
     """
 
