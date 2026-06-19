@@ -1,6 +1,6 @@
 [project]
 name = "alpha-forge-mcp"
-version = "0.1.0a4"
+version = "0.1.0a5"
 description = "MCP server (stdio) exposing the AlphaForge `forge` CLI to Claude Code / Cursor / Codex"
 readme = "README.md"
 license = { text = "Apache-2.0" }
