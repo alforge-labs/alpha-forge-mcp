@@ -24,6 +24,34 @@ actually run.
 | `run_optimize` | Optimize parameters (Optuna) | `alpha-forge optimize run <symbol> --strategy <id> [--metric] [--trials] --json` |
 | `generate_pinescript` | Generate Pine Script v6 source | `alpha-forge pine preview --strategy <id> [--with-webhook]` |
 
+All tools carry MCP **tool annotations** (`readOnlyHint` for the read tools; `openWorldHint`
+for `run_backtest` / `run_optimize`, which fetch external market data) and return
+**structured output** — `structuredContent` with an object `outputSchema` — alongside the
+text result.
+
+## Resources
+
+Read-only data is also exposed as MCP **resources**, so clients such as Claude Code can
+reference them by `@`-mention without an explicit tool call. They delegate to the same
+`alpha-forge` commands as the read tools and return `application/json`.
+
+| Resource URI | Payload |
+|--------------|---------|
+| `forge://strategies` | All registered strategies |
+| `forge://strategy/{strategy_id}` | One strategy definition |
+| `forge://results` | All saved backtest results |
+| `forge://result/{result_id}` | Metrics & trades of one result |
+
+## Prompts
+
+Reusable workflows are exposed as MCP **prompts** (surfaced as
+`/mcp__alpha-forge__<name>` slash commands in Claude Code):
+
+| Prompt | Arguments | What it does |
+|--------|-----------|--------------|
+| `backtest_and_review` | `strategy_id`, `symbol` | Run a backtest, then review the key metrics and red flags |
+| `optimize_and_verify` | `strategy_id`, `symbol` | Optimize with Optuna, then check the result for overfitting |
+
 Streamable HTTP transport, RBAC, rate limiting, and audit logging are planned for a later
 release.
 
