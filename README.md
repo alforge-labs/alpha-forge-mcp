@@ -29,6 +29,21 @@ for `run_backtest` / `run_optimize`, which fetch external market data) and retur
 **structured output** — `structuredContent` with an object `outputSchema` — alongside the
 text result.
 
+### Error envelope
+
+Every tool returns a uniform **error envelope** as its (always-successful) result rather
+than raising, so an agent can branch on the failure category mechanically instead of
+parsing free text:
+
+- Success: `{"ok": true, "data": { ...alpha-forge JSON... }, "error": null}`
+- Failure: `{"ok": false, "data": null, "error": {"code": "<category>", "message": "<human readable>", "detail": null}}`
+
+`error.code` is the machine-readable failure category — e.g. `forge_not_found` (binary
+missing → guide setup), `authentication_required` (run `alpha-forge system auth login`),
+`freemium_blocked` (premium-only feature → stop), `strategy_not_found`, `timeout` (safe to
+retry), `bad_output`, `execution_failed`. The `outputSchema` reflects this `ok` / `data` /
+`error` shape.
+
 ## Resources
 
 Read-only data is also exposed as MCP **resources**, so clients such as Claude Code can
