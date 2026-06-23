@@ -13,6 +13,7 @@ from alpha_forge_mcp.forge_client import (
     ForgeClient,
     _find_forge_binary,
     _validate_identifier,
+    forge_status,
 )
 
 
@@ -286,6 +287,253 @@ class TestToolArgs:
             "sma_v1",
             "--with-webhook",
         ]
+
+
+class TestRunWalkForward:
+    """#24: ``optimize walk-forward`` への 1:1 マッピング（--json あり）。"""
+
+    def _capture(self, fn) -> tuple[list[str], MagicMock]:
+        with patch("alpha_forge_mcp.forge_client.subprocess.run") as run:
+            run.return_value = _completed(stdout="{}")
+            fn(ForgeClient(forge_bin="/fake/forge"))
+            return list(run.call_args.args[0]), run
+
+    def test_最小引数_symbolはpositional_strategyはフラグ(self) -> None:
+        cmd, _ = self._capture(lambda c: c.run_walk_forward("AAPL", "sma_v1"))
+        assert cmd == [
+            "/fake/forge",
+            "optimize",
+            "walk-forward",
+            "AAPL",
+            "--strategy",
+            "sma_v1",
+            "--json",
+        ]
+
+    def test_windowsとmetricを渡す(self) -> None:
+        cmd, _ = self._capture(
+            lambda c: c.run_walk_forward("AAPL", "sma_v1", windows=8, metric="sharpe_ratio")
+        )
+        assert cmd == [
+            "/fake/forge",
+            "optimize",
+            "walk-forward",
+            "AAPL",
+            "--strategy",
+            "sma_v1",
+            "--windows",
+            "8",
+            "--metric",
+            "sharpe_ratio",
+            "--json",
+        ]
+
+    def test_optimize同等のtimeoutを適用する(self) -> None:
+        from alpha_forge_mcp.forge_client import _OPTIMIZE_TIMEOUT
+
+        _, run = self._capture(lambda c: c.run_walk_forward("AAPL", "sma_v1"))
+        assert run.call_args.kwargs.get("timeout") == _OPTIMIZE_TIMEOUT
+
+    @pytest.mark.parametrize("bad", [0, -1, True, 1.5, "5"])
+    def test_不正なwindowsを拒否する(self, bad) -> None:
+        with pytest.raises(ForgeError) as exc:
+            ForgeClient(forge_bin="/fake/forge").run_walk_forward("AAPL", "sma_v1", windows=bad)
+        assert exc.value.code == "invalid_argument"
+
+    def test_空metricを拒否する(self) -> None:
+        with pytest.raises(ForgeError) as exc:
+            ForgeClient(forge_bin="/fake/forge").run_walk_forward("AAPL", "sma_v1", metric="")
+        assert exc.value.code == "invalid_argument"
+
+    def test_成功時にJSONをパースして返す(self) -> None:
+        payload = {"symbol": "AAPL", "windows": [], "valid_oos_windows": 0}
+        with patch("alpha_forge_mcp.forge_client.subprocess.run") as run:
+            run.return_value = _completed(stdout=json.dumps(payload))
+            out = ForgeClient(forge_bin="/fake/forge").run_walk_forward("AAPL", "sma_v1")
+        assert out == payload
+
+
+class TestRunMonteCarlo:
+    """#24: ``backtest monte-carlo`` への 1:1 マッピング（--json あり）。"""
+
+    def _capture(self, fn) -> tuple[list[str], MagicMock]:
+        with patch("alpha_forge_mcp.forge_client.subprocess.run") as run:
+            run.return_value = _completed(stdout="{}")
+            fn(ForgeClient(forge_bin="/fake/forge"))
+            return list(run.call_args.args[0]), run
+
+    def test_最小引数_result_idはpositional(self) -> None:
+        cmd, _ = self._capture(lambda c: c.run_monte_carlo("run_abc"))
+        assert cmd == [
+            "/fake/forge",
+            "backtest",
+            "monte-carlo",
+            "run_abc",
+            "--json",
+        ]
+
+    def test_simulationsを渡す(self) -> None:
+        cmd, _ = self._capture(lambda c: c.run_monte_carlo("run_abc", simulations=5000))
+        assert cmd == [
+            "/fake/forge",
+            "backtest",
+            "monte-carlo",
+            "run_abc",
+            "--simulations",
+            "5000",
+            "--json",
+        ]
+
+    @pytest.mark.parametrize("bad", [0, -1, True, 1.5, "1000"])
+    def test_不正なsimulationsを拒否する(self, bad) -> None:
+        with pytest.raises(ForgeError) as exc:
+            ForgeClient(forge_bin="/fake/forge").run_monte_carlo("run_abc", simulations=bad)
+        assert exc.value.code == "invalid_argument"
+
+    def test_成功時にJSONをパースして返す(self) -> None:
+        payload = {"initial_capital": 100000, "ruin_probability_pct": 0.0}
+        with patch("alpha_forge_mcp.forge_client.subprocess.run") as run:
+            run.return_value = _completed(stdout=json.dumps(payload))
+            out = ForgeClient(forge_bin="/fake/forge").run_monte_carlo("run_abc")
+        assert out == payload
+
+
+class TestFetchData:
+    """#25: ``data fetch`` への 1:1 マッピング（CLI は --json 非対応のため text）。"""
+
+    def _capture(self, fn) -> tuple[list[str], MagicMock]:
+        with patch("alpha_forge_mcp.forge_client.subprocess.run") as run:
+            run.return_value = _completed(stdout="Fetched and saved data for AAPL (1234 lines)\n")
+            fn(ForgeClient(forge_bin="/fake/forge"))
+            return list(run.call_args.args[0]), run
+
+    def test_最小引数_symbolはpositional(self) -> None:
+        cmd, _ = self._capture(lambda c: c.fetch_data("AAPL"))
+        # data fetch は --json 非対応・stdout はテキスト → --json は付けない
+        assert cmd == ["/fake/forge", "data", "fetch", "AAPL"]
+        assert "--json" not in cmd
+
+    def test_periodを渡す(self) -> None:
+        cmd, _ = self._capture(lambda c: c.fetch_data("AAPL", period="5y"))
+        assert cmd == ["/fake/forge", "data", "fetch", "AAPL", "--period", "5y"]
+
+    def test_period形式を検証して不正なら拒否する(self) -> None:
+        with pytest.raises(ForgeError) as exc:
+            ForgeClient(forge_bin="/fake/forge").fetch_data("AAPL", period="bad period")
+        assert exc.value.code == "invalid_argument"
+
+    def test_テキスト出力を構造化dictで包む(self) -> None:
+        with patch("alpha_forge_mcp.forge_client.subprocess.run") as run:
+            run.return_value = _completed(
+                stdout="Fetched and saved data for AAPL (1234 lines)\n"
+            )
+            out = ForgeClient(forge_bin="/fake/forge").fetch_data("AAPL", period="5y")
+        assert out == {
+            "symbol": "AAPL",
+            "period": "5y",
+            "output": "Fetched and saved data for AAPL (1234 lines)\n",
+        }
+
+    def test_不正なsymbolを拒否する(self) -> None:
+        with pytest.raises(ForgeError) as exc:
+            ForgeClient(forge_bin="/fake/forge").fetch_data("--watchlist")
+        assert exc.value.code == "invalid_argument"
+
+
+class TestSaveStrategy:
+    """#25: ``strategy save`` への 1:1 マッピング（JSON 本文を一時ファイル経由で渡す）。"""
+
+    def test_JSON本文を一時ファイルに書きstrategy_saveを呼ぶ(self) -> None:
+        body = json.dumps({"strategy_id": "sma_v1", "version": "1.0.0"})
+        with patch("alpha_forge_mcp.forge_client.subprocess.run") as run:
+            run.return_value = _completed(stdout="✅ Strategy 'sma_v1' registered\n")
+            ForgeClient(forge_bin="/fake/forge").save_strategy(body)
+        cmd = run.call_args.args[0]
+        # strategy save <tmpfile>（--json 非対応・ファイルパス引数）
+        assert cmd[:3] == ["/fake/forge", "strategy", "save"]
+        assert "--json" not in cmd
+        # 第4引数は一時ファイルパス（位置引数）
+        assert len(cmd) >= 4
+
+    def test_一時ファイルは実行後に削除される(self) -> None:
+        body = json.dumps({"strategy_id": "sma_v1", "version": "1.0.0"})
+        captured: dict[str, str] = {}
+
+        def _capture_path(*args, **kwargs):
+            captured["path"] = args[0][-1]
+            return _completed(stdout="ok\n")
+
+        with patch("alpha_forge_mcp.forge_client.subprocess.run", side_effect=_capture_path):
+            ForgeClient(forge_bin="/fake/forge").save_strategy(body)
+        from pathlib import Path as _P
+
+        assert not _P(captured["path"]).exists()
+
+    def test_不正なJSON本文を拒否する(self) -> None:
+        with pytest.raises(ForgeError) as exc:
+            ForgeClient(forge_bin="/fake/forge").save_strategy("{not valid json")
+        assert exc.value.code == "invalid_argument"
+
+    def test_非dictのJSONを拒否する(self) -> None:
+        with pytest.raises(ForgeError) as exc:
+            ForgeClient(forge_bin="/fake/forge").save_strategy("[1, 2, 3]")
+        assert exc.value.code == "invalid_argument"
+
+    def test_テキスト出力を構造化dictで包む(self) -> None:
+        body = json.dumps({"strategy_id": "sma_v1", "version": "1.0.0"})
+        with patch("alpha_forge_mcp.forge_client.subprocess.run") as run:
+            run.return_value = _completed(stdout="✅ Strategy 'sma_v1' registered\n")
+            out = ForgeClient(forge_bin="/fake/forge").save_strategy(body)
+        assert out["output"] == "✅ Strategy 'sma_v1' registered\n"
+
+
+class TestForgeStatus:
+    """#26: ``system doctor --json`` + version を集約した read-only ステータス。"""
+
+    def test_binary未検出でもraiseせずbinary_found_falseを返す(self, monkeypatch) -> None:
+        monkeypatch.delenv("ALPHA_FORGE_BIN", raising=False)
+        with patch("alpha_forge_mcp.forge_client.shutil.which", return_value=None), patch(
+            "alpha_forge_mcp.forge_client.Path.exists", return_value=False
+        ):
+            out = forge_status()
+        assert out["binary_found"] is False
+        assert out["version"] is None
+        assert out["authenticated"] is False
+
+    def test_doctorのJSONを集約して返す(self) -> None:
+        report = {
+            "version": "0.14.0",
+            "platform": {"system": "Darwin"},
+            "license": {"plan": "pro", "authenticated": True, "offline_degraded": False},
+            "config": {"config_path": "/x/forge.yaml"},
+            "paths": {},
+            "logs": {},
+        }
+        with patch("alpha_forge_mcp.forge_client.subprocess.run") as run:
+            run.return_value = _completed(stdout=json.dumps(report))
+            out = forge_status(forge_bin="/fake/forge")
+        assert out["binary_found"] is True
+        assert out["version"] == "0.14.0"
+        assert out["authenticated"] is True
+        assert out["plan"] == "pro"
+        # 生 doctor レポートも doctor キーで保持する
+        assert out["doctor"] == report
+
+    def test_doctorコマンドはsystem_doctor_jsonを呼ぶ(self) -> None:
+        with patch("alpha_forge_mcp.forge_client.subprocess.run") as run:
+            run.return_value = _completed(stdout=json.dumps({"version": "0.1.0"}))
+            forge_status(forge_bin="/fake/forge")
+        cmd = run.call_args.args[0]
+        assert cmd == ["/fake/forge", "system", "doctor", "--json"]
+
+    def test_doctor失敗時もbinary_found_trueでerror情報を返す(self) -> None:
+        # doctor が壊れて非ゼロ終了しても status 取得自体は落とさない（read-only 診断）。
+        with patch("alpha_forge_mcp.forge_client.subprocess.run") as run:
+            run.return_value = _completed(stderr="boom", returncode=1)
+            out = forge_status(forge_bin="/fake/forge")
+        assert out["binary_found"] is True
+        assert out["doctor"] is None
+        assert out["error"] is not None
 
 
 class TestListStrategiesNormalization:

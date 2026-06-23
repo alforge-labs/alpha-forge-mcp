@@ -93,6 +93,9 @@ def _classify_failure(args: list[str], proc: subprocess.CompletedProcess) -> For
 _IDENT_RE = re.compile(r"^[A-Za-z0-9^][A-Za-z0-9._\-=^:]*$")
 _MAX_IDENT_LEN = 256
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+# data fetch の --period（例: 1y / 5y / 6m / 30d）または "max"。
+# 引数注入を防ぐため形式を厳密に制限する（先頭ハイフン等を弾く）。
+_PERIOD_RE = re.compile(r"^(?:max|\d+[ymwd])$", re.IGNORECASE)
 
 
 def _find_forge_binary() -> str | None:
@@ -157,6 +160,15 @@ def _validate_positive_int(value: object, name: str = "value") -> str:
     if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
         raise ForgeError("invalid_argument", f"{name} must be a positive integer: {value!r}")
     return str(value)
+
+
+def _validate_period(value: str) -> str:
+    """data fetch の --period 形式（例: 1y, 5y, 6m, 30d, max）を検証。不正なら ForgeError。"""
+    if not isinstance(value, str) or _PERIOD_RE.match(value) is None:
+        raise ForgeError(
+            "invalid_argument", f"invalid period (expected e.g. 1y, 6m, 30d, max): {value!r}"
+        )
+    return value
 
 
 def _normalize_strategy_row(row: dict[str, Any]) -> dict[str, Any]:
@@ -346,3 +358,144 @@ class ForgeClient:
             args.append("--with-webhook")
         script = self._call_text(args)
         return {"strategy_id": validated_id, "pinescript": script}
+
+    def run_walk_forward(
+        self,
+        symbol: str,
+        strategy_id: str,
+        windows: int | None = None,
+        metric: str | None = None,
+    ) -> Any:
+        """``forge optimize walk-forward <symbol> --strategy <id> [--windows ..] [--metric ..] --json``
+
+        各ウィンドウで Optuna 最適化を回すため、run_optimize と同等の長いタイムアウト
+        （``_OPTIMIZE_TIMEOUT``）を適用する（#24）。
+        """  # noqa: E501
+        args = [
+            "optimize",
+            "walk-forward",
+            _validate_identifier(symbol),
+            "--strategy",
+            _validate_identifier(strategy_id),
+        ]
+        if windows is not None:
+            args += ["--windows", _validate_positive_int(windows, "windows")]
+        # 空文字を None と区別し、metric="" は検証で弾く（run_optimize と同方針）。
+        if metric is not None:
+            args += ["--metric", _validate_identifier(metric)]
+        return self._call(args, timeout=_OPTIMIZE_TIMEOUT)
+
+    def run_monte_carlo(
+        self,
+        result_id: str,
+        simulations: int | None = None,
+    ) -> Any:
+        """``forge backtest monte-carlo <result_id> [--simulations ..] --json``
+
+        既存のバックテスト結果（trades）からの再標本化のみで重い計算実行ではない
+        ため、backtest と同等のタイムアウト（``_BACKTEST_TIMEOUT``）を適用する（#24）。
+        """
+        args = ["backtest", "monte-carlo", _validate_identifier(result_id)]
+        if simulations is not None:
+            args += ["--simulations", _validate_positive_int(simulations, "simulations")]
+        return self._call(args, timeout=_BACKTEST_TIMEOUT)
+
+    def fetch_data(self, symbol: str, period: str | None = None) -> dict[str, str | None]:
+        """``forge data fetch <symbol> [--period ..]``（外部市場データを取得・保存）。
+
+        ``data fetch`` は ``--json`` 非対応で stdout がテキスト（"Fetched and saved
+        data for AAPL (1234 lines)" 等）のため、``generate_pinescript`` と同様に
+        ``_call_text`` で取得し構造化 dict に包んで返す（#25）。``--start`` / ``--end``
+        は CLI 側に存在しないため公開しない（period のみ）。外部データ取得は時間が
+        かかりうるため backtest と同等のタイムアウト（``_BACKTEST_TIMEOUT``）を使う。
+        """
+        validated_symbol = _validate_identifier(symbol)
+        args = ["data", "fetch", validated_symbol]
+        if period is not None:
+            args += ["--period", _validate_period(period)]
+        output = self._call_text(args, timeout=_BACKTEST_TIMEOUT)
+        return {"symbol": validated_symbol, "period": period, "output": output}
+
+    def save_strategy(self, json_body: str) -> dict[str, str]:
+        """``forge strategy save <tmpfile>``（戦略 JSON 本文を登録）。
+
+        ``strategy save`` はファイルパス引数を取り ``--json`` 非対応のため、
+        エージェント親和的に **JSON 本文（文字列）** を受け取り、一時ファイルへ
+        書き出してから ``strategy save <tmpfile>`` を呼ぶ（#25）。一時ファイルは
+        実行後に必ず削除する。本文は事前に JSON object として妥当か検証する
+        （非 JSON / 非 object はサブプロセスに渡す前に invalid_argument で弾く）。
+        """
+        try:
+            parsed = json.loads(json_body)
+        except (json.JSONDecodeError, TypeError) as exc:
+            raise ForgeError("invalid_argument", f"json_body is not valid JSON: {exc}") from exc
+        if not isinstance(parsed, dict):
+            raise ForgeError(
+                "invalid_argument", "json_body must be a JSON object (strategy definition)"
+            )
+
+        import tempfile
+
+        tmp = tempfile.NamedTemporaryFile(
+            mode="w", suffix=".json", encoding="utf-8", delete=False
+        )
+        try:
+            tmp.write(json_body)
+            tmp.flush()
+            tmp.close()
+            output = self._call_text(["strategy", "save", tmp.name])
+        finally:
+            try:
+                os.unlink(tmp.name)
+            except OSError:
+                pass
+        return {"output": output}
+
+
+def forge_status(forge_bin: str | None = None) -> dict[str, Any]:
+    """forge の能力・前提を起動前に判定する read-only ステータス（#26）。
+
+    ``forge system doctor --json`` と version を集約し、binary が見つからない場合でも
+    例外を投げずに ``binary_found: False`` を返す（クライアントが起動前提を機械的に
+    トリアージできるようにするため）。doctor が壊れて非ゼロ終了しても status 取得
+    自体は落とさず、``error`` に文脈を載せて返す。
+
+    Returns:
+        ``{"binary_found", "version", "authenticated", "plan", "doctor", "error"}``。
+        ``doctor`` は doctor の生 JSON レポート（失敗時 None）。
+    """
+    resolved = forge_bin or _find_forge_binary()
+    if not resolved:
+        return {
+            "binary_found": False,
+            "version": None,
+            "authenticated": False,
+            "plan": None,
+            "doctor": None,
+            "error": "forge binary not found (set ALPHA_FORGE_BIN or add it to PATH)",
+        }
+
+    client = ForgeClient(forge_bin=resolved)
+    try:
+        report = client._call(["system", "doctor"])
+    except ForgeError as exc:
+        # doctor が落ちても binary は存在する。read-only 診断なので status は返す。
+        return {
+            "binary_found": True,
+            "version": None,
+            "authenticated": False,
+            "plan": None,
+            "doctor": None,
+            "error": exc.message,
+        }
+
+    license_info = report.get("license") if isinstance(report, dict) else None
+    license_info = license_info if isinstance(license_info, dict) else {}
+    return {
+        "binary_found": True,
+        "version": report.get("version") if isinstance(report, dict) else None,
+        "authenticated": bool(license_info.get("authenticated", False)),
+        "plan": license_info.get("plan"),
+        "doctor": report,
+        "error": None,
+    }

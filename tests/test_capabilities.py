@@ -17,14 +17,25 @@ from alpha_forge_mcp import server as server_mod
 from alpha_forge_mcp.server import mcp
 
 # read 系（副作用なし・冪等・ローカル参照のみ）と run 系（外部データ取得・永続化）。
+# forge_status は doctor をローカル参照するだけで外部に触れない read 系（#26）。
 _READ_TOOLS = {
     "list_strategies",
     "get_strategy",
     "list_results",
     "get_result",
     "generate_pinescript",
+    "forge_status",
 }
-_RUN_TOOLS = {"run_backtest", "run_optimize"}
+# run 系: 外部市場データ取得・最適化実行・DB 永続化を伴う非冪等な実行。
+# fetch_data=外部データ取得 / save_strategy=DB 書込 / WFT・MC=重い計算実行。
+_RUN_TOOLS = {
+    "run_backtest",
+    "run_optimize",
+    "run_walk_forward",
+    "run_monte_carlo",
+    "fetch_data",
+    "save_strategy",
+}
 _ALL_TOOLS = _READ_TOOLS | _RUN_TOOLS
 
 

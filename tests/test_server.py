@@ -17,6 +17,12 @@ _EXPECTED = {
     "run_backtest",
     "run_optimize",
     "generate_pinescript",
+    # #24/#25/#26: tool 網羅拡張
+    "run_walk_forward",
+    "run_monte_carlo",
+    "fetch_data",
+    "save_strategy",
+    "forge_status",
 }
 
 
@@ -101,3 +107,39 @@ def test_generate_pinescriptのスキーマにstrategy_idが必須() -> None:
     by_name = {t.name: t for t in tools}
     schema = by_name["generate_pinescript"].inputSchema
     assert "strategy_id" in schema.get("required", [])
+
+
+def test_run_walk_forwardのスキーマにsymbolとstrategy_idが必須() -> None:
+    tools = asyncio.run(mcp.list_tools())
+    by_name = {t.name: t for t in tools}
+    required = set(by_name["run_walk_forward"].inputSchema.get("required", []))
+    assert {"symbol", "strategy_id"}.issubset(required)
+
+
+def test_run_monte_carloのスキーマにresult_idが必須() -> None:
+    tools = asyncio.run(mcp.list_tools())
+    by_name = {t.name: t for t in tools}
+    schema = by_name["run_monte_carlo"].inputSchema
+    assert "result_id" in schema.get("required", [])
+
+
+def test_fetch_dataのスキーマにsymbolが必須() -> None:
+    tools = asyncio.run(mcp.list_tools())
+    by_name = {t.name: t for t in tools}
+    schema = by_name["fetch_data"].inputSchema
+    assert "symbol" in schema.get("required", [])
+
+
+def test_save_strategyのスキーマにjson_bodyが必須() -> None:
+    tools = asyncio.run(mcp.list_tools())
+    by_name = {t.name: t for t in tools}
+    schema = by_name["save_strategy"].inputSchema
+    assert "json_body" in schema.get("required", [])
+
+
+def test_forge_statusは引数を取らない() -> None:
+    # read-only な能力判定 tool（起動前提のトリアージ用）。
+    tools = asyncio.run(mcp.list_tools())
+    by_name = {t.name: t for t in tools}
+    schema = by_name["forge_status"].inputSchema
+    assert schema.get("required", []) == []
