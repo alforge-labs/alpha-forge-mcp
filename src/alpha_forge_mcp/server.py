@@ -23,6 +23,7 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 
+from alpha_forge_mcp.envelope import Envelope, envelope
 from alpha_forge_mcp.forge_client import ForgeClient
 
 # name は PyPI パッケージ名（alpha-forge-mcp）と一致させる（issue #3）。
@@ -56,60 +57,72 @@ def _get_client() -> ForgeClient:
 
 
 # ---------------------------------------------------------------------------
-# Tools（#16 annotations / #17 structured output）
-# 戻り値型は dict[str, Any]：forge は全コマンドで JSON オブジェクトを返すため、
-# FastMCP が object の outputSchema を生成し structuredContent を返せる。
+# Tools（#16 annotations / #17 structured output / #23 error envelope）
+# 戻り値は ``@envelope`` で統一した error envelope（Envelope TypedDict）。
+# 成功時 {"ok": True, "data": <forge の JSON>, "error": None} /
+# 失敗時 {"ok": False, "data": None, "error": {"code", "message", "detail"}}。
+# forge は全コマンドで JSON オブジェクトを返すため data は object であり、
+# FastMCP は Envelope から ok/data/error 枝を持つ object の outputSchema を生成する。
+# 例外を素通しさせると FastMCP が自由文 ToolError に再ラップし code が構造化
+# フィールドとして届かないため、各 tool は @envelope で必ず envelope を返す（#23）。
 # ---------------------------------------------------------------------------
 
 
 @mcp.tool(annotations=_READ_ONLY)
-def list_strategies() -> dict[str, Any]:
+@envelope
+def list_strategies() -> Envelope:
     """List all registered AlphaForge strategies (strategy_id, name, version, timeframe)."""
     return _get_client().list_strategies()
 
 
 @mcp.tool(annotations=_READ_ONLY)
-def get_strategy(strategy_id: str) -> dict[str, Any]:
+@envelope
+def get_strategy(strategy_id: str) -> Envelope:
     """Get the full JSON definition of a registered strategy by its strategy_id."""
     return _get_client().get_strategy(strategy_id)
 
 
 @mcp.tool(annotations=_READ_ONLY)
-def list_results(strategy_id: str | None = None) -> dict[str, Any]:
+@envelope
+def list_results(strategy_id: str | None = None) -> Envelope:
     """List saved backtest results, optionally filtered by strategy_id."""
     return _get_client().list_results(strategy_id)
 
 
 @mcp.tool(annotations=_READ_ONLY)
-def get_result(result_id: str) -> dict[str, Any]:
+@envelope
+def get_result(result_id: str) -> Envelope:
     """Get metrics and trades for a saved backtest result (result_id = strategy_id or run_id)."""
     return _get_client().get_result(result_id)
 
 
 @mcp.tool(annotations=_RUN)
+@envelope
 def run_backtest(
     symbol: str,
     strategy_id: str,
     start: str | None = None,
     end: str | None = None,
-) -> dict[str, Any]:
+) -> Envelope:
     """Run a backtest for `symbol` with a registered strategy. Optional dates are YYYY-MM-DD."""
     return _get_client().run_backtest(symbol, strategy_id, start=start, end=end)
 
 
 @mcp.tool(annotations=_RUN)
+@envelope
 def run_optimize(
     symbol: str,
     strategy_id: str,
     metric: str | None = None,
     trials: int | None = None,
-) -> dict[str, Any]:
+) -> Envelope:
     """Optimize strategy parameters with Optuna for `symbol`. metric defaults to sharpe_ratio."""
     return _get_client().run_optimize(symbol, strategy_id, metric=metric, trials=trials)
 
 
 @mcp.tool(annotations=_READ_ONLY)
-def generate_pinescript(strategy_id: str, with_webhook: bool = False) -> dict[str, Any]:
+@envelope
+def generate_pinescript(strategy_id: str, with_webhook: bool = False) -> Envelope:
     """Generate TradingView Pine Script v6 for a strategy. Returns {strategy_id, pinescript}."""
     return _get_client().generate_pinescript(strategy_id, with_webhook=with_webhook)
 
