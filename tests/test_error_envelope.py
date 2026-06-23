@@ -21,7 +21,8 @@ from alpha_forge_mcp import server as server_mod
 from alpha_forge_mcp.errors import ForgeError, ForgeNotFoundError
 
 # (tool 関数, client メソッド名, 呼び出し引数) の対応表。
-# 公開 7 tool すべてを同一契約で網羅する。
+# 公開 tool すべてを同一契約で網羅する（#24/#25/#26 の拡張 tool 含む）。
+# forge_status は client メソッドでなくモジュール関数のため別途検証する。
 _TOOL_CASES = [
     (server_mod.list_strategies, "list_strategies", ()),
     (server_mod.get_strategy, "get_strategy", ("sma_v1",)),
@@ -30,6 +31,10 @@ _TOOL_CASES = [
     (server_mod.run_backtest, "run_backtest", ("AAPL", "sma_v1")),
     (server_mod.run_optimize, "run_optimize", ("AAPL", "sma_v1")),
     (server_mod.generate_pinescript, "generate_pinescript", ("sma_v1",)),
+    (server_mod.run_walk_forward, "run_walk_forward", ("AAPL", "sma_v1")),
+    (server_mod.run_monte_carlo, "run_monte_carlo", ("run_abc",)),
+    (server_mod.fetch_data, "fetch_data", ("AAPL",)),
+    (server_mod.save_strategy, "save_strategy", ('{"strategy_id": "x"}',)),
 ]
 
 
@@ -130,6 +135,32 @@ class TestErrorEnvelope:
         assert "boom" in result["error"]["message"]
 
 
+class TestForgeStatusEnvelope:
+    """#26: forge_status tool は client メソッドでなくモジュール関数 (_forge_status)
+    を委譲先とするが、他 tool と同一の envelope 契約を守る。"""
+
+    def test_成功時にokTrueとstatus_dataを返す(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        status = {"binary_found": True, "version": "0.14.0", "authenticated": True}
+        monkeypatch.setattr(server_mod, "_forge_status", lambda: status)
+
+        result = server_mod.forge_status()
+
+        assert result["ok"] is True
+        assert result["data"] == status
+        assert result["error"] is None
+
+    def test_例外を送出せずenvelopeで握る(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        def _boom() -> object:
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(server_mod, "_forge_status", _boom)
+
+        result = server_mod.forge_status()
+
+        assert result["ok"] is False
+        assert result["error"]["code"] == "execution_failed"
+
+
 class TestEnvelopeOutputSchema:
     """outputSchema に error 枝（ok / data / error）が反映されること（#23 の bonus）。"""
 
@@ -147,6 +178,11 @@ class TestEnvelopeOutputSchema:
             "run_backtest",
             "run_optimize",
             "generate_pinescript",
+            "run_walk_forward",
+            "run_monte_carlo",
+            "fetch_data",
+            "save_strategy",
+            "forge_status",
         }
         for name in expected:
             schema = tools[name].outputSchema

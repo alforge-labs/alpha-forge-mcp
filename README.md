@@ -22,12 +22,25 @@ actually run.
 | `get_result` | Metrics & trades of one result | `alpha-forge backtest report <result_id> --json` |
 | `run_backtest` | Run a backtest | `alpha-forge backtest run <symbol> --strategy <id> [--start] [--end] --json` |
 | `run_optimize` | Optimize parameters (Optuna) | `alpha-forge optimize run <symbol> --strategy <id> [--metric] [--trials] --json` |
+| `run_walk_forward` | Walk-forward (out-of-sample) optimization | `alpha-forge optimize walk-forward <symbol> --strategy <id> [--windows] [--metric] --json` |
+| `run_monte_carlo` | Monte Carlo from a saved result | `alpha-forge backtest monte-carlo <result_id> [--simulations] --json` |
+| `fetch_data` | Fetch & cache historical OHLCV (prereq for `run_backtest`) | `alpha-forge data fetch <symbol> [--period]` |
+| `save_strategy` | Register a strategy from its JSON **body** | `alpha-forge strategy save <tmpfile>` |
 | `generate_pinescript` | Generate Pine Script v6 source | `alpha-forge pine preview --strategy <id> [--with-webhook]` |
+| `forge_status` | Report capabilities/prerequisites (doctor + version) | `alpha-forge system doctor --json` |
 
-All tools carry MCP **tool annotations** (`readOnlyHint` for the read tools; `openWorldHint`
-for `run_backtest` / `run_optimize`, which fetch external market data) and return
-**structured output** — `structuredContent` with an object `outputSchema` — alongside the
-text result.
+`save_strategy` takes the strategy-definition **JSON body** as a string (not a file path,
+which is more agent-friendly); it is written to a temp file before `strategy save`.
+`fetch_data` exposes only `period` because the CLI has no `--start`/`--end`. `forge_status`
+is read-only and never fails when the binary is missing — it returns `binary_found: false`
+so a client can triage prerequisites before doing anything else.
+
+All tools carry MCP **tool annotations** (`readOnlyHint` for the read tools — the `list`/
+`get` lookups, `generate_pinescript`, and `forge_status`; `openWorldHint` for the run tools
+— `run_backtest` / `run_optimize` / `run_walk_forward` / `run_monte_carlo`, plus
+`fetch_data` (fetches external market data) and `save_strategy` (writes to the DB)) and
+return **structured output** — `structuredContent` with an object `outputSchema` —
+alongside the text result.
 
 ### Error envelope
 

@@ -3,9 +3,11 @@
 FastMCP に以下を登録する。いずれも ``ForgeClient`` を介して forge バイナリを
 subprocess で呼ぶ（コアロジックは含まない／露出しない）。
 
-- **Tools**（7）: read 4 + run_backtest + run_optimize + generate_pinescript。
-  read 系 / run 系を ``ToolAnnotations`` で区別し（#16）、戻り値型注釈から
-  ``outputSchema`` を生成して structured output を返す（#17）。
+- **Tools**（12）: read 系（list/get/generate_pinescript/forge_status）と run 系
+  （run_backtest / run_optimize / run_walk_forward / run_monte_carlo / fetch_data /
+  save_strategy）。read 系 / run 系を ``ToolAnnotations`` で区別し（#16）、戻り値型
+  注釈から ``outputSchema`` を生成して structured output を返す（#17）。
+  #24/#25/#26 で WFT・MC・data fetch・strategy save・forge_status を追加。
 - **Resources**（#18）: read データを ``forge://...`` で公開し、Claude Code 等の
   @メンション参照を可能にする（Tool は能動実行用に併存）。
 - **Prompts**（#19）: 定型ワークフローを公開し、Claude Code のスラッシュコマンド化。
@@ -25,6 +27,7 @@ from mcp.types import ToolAnnotations
 
 from alpha_forge_mcp.envelope import Envelope, envelope
 from alpha_forge_mcp.forge_client import ForgeClient
+from alpha_forge_mcp.forge_client import forge_status as _forge_status
 
 # name は PyPI パッケージ名（alpha-forge-mcp）と一致させる（issue #3）。
 mcp = FastMCP("alpha-forge-mcp")
@@ -125,6 +128,74 @@ def run_optimize(
 def generate_pinescript(strategy_id: str, with_webhook: bool = False) -> Envelope:
     """Generate TradingView Pine Script v6 for a strategy. Returns {strategy_id, pinescript}."""
     return _get_client().generate_pinescript(strategy_id, with_webhook=with_webhook)
+
+
+# ---------------------------------------------------------------------------
+# Tool 網羅拡張（#24 WFT/MC・#25 fetch/save・#26 status）。
+# 既存 7 tool と同形（@mcp.tool annotations + @envelope）で契約を揃える。
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool(annotations=_RUN)
+@envelope
+def run_walk_forward(
+    symbol: str,
+    strategy_id: str,
+    windows: int | None = None,
+    metric: str | None = None,
+) -> Envelope:
+    """Run walk-forward optimization for `symbol` (out-of-sample robustness check).
+
+    windows defaults to 5, metric to sharpe_ratio. Required by the optimize_and_verify
+    workflow to compare in-sample vs out-of-sample behaviour.
+    """
+    return _get_client().run_walk_forward(
+        symbol, strategy_id, windows=windows, metric=metric
+    )
+
+
+@mcp.tool(annotations=_RUN)
+@envelope
+def run_monte_carlo(result_id: str, simulations: int | None = None) -> Envelope:
+    """Run a Monte Carlo simulation from a saved backtest result (resamples its trades).
+
+    result_id = strategy_id or run_id. simulations defaults to 1000. Returns ruin
+    probability, equity percentiles, and drawdown distribution for risk assessment.
+    """
+    return _get_client().run_monte_carlo(result_id, simulations=simulations)
+
+
+@mcp.tool(annotations=_RUN)
+@envelope
+def fetch_data(symbol: str, period: str | None = None) -> Envelope:
+    """Fetch & cache historical OHLCV for `symbol` (prerequisite for run_backtest).
+
+    period is e.g. 1y / 5y / 6m / 30d / max (defaults to 1y). Returns {symbol, period,
+    output}. The CLI has no --start/--end, so only period is exposed.
+    """
+    return _get_client().fetch_data(symbol, period=period)
+
+
+@mcp.tool(annotations=_RUN)
+@envelope
+def save_strategy(json_body: str) -> Envelope:
+    """Register a strategy from its JSON body (not a file path; agent-friendly).
+
+    Pass the full strategy-definition JSON as a string; it is validated as a JSON object
+    and written to a temp file before `strategy save`. Returns {output}.
+    """
+    return _get_client().save_strategy(json_body)
+
+
+@mcp.tool(annotations=_READ_ONLY)
+@envelope
+def forge_status() -> Envelope:
+    """Report alpha-forge capabilities/prerequisites before use (doctor + version).
+
+    Read-only triage: returns {binary_found, version, authenticated, plan, doctor, error}.
+    Never fails when the binary is missing — returns binary_found=false instead.
+    """
+    return _forge_status()
 
 
 # ---------------------------------------------------------------------------
