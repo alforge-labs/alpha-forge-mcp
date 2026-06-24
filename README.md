@@ -21,13 +21,18 @@ actually run.
 | `list_results` | List saved backtest results | `alpha-forge backtest list [--strategy <id>] --json` |
 | `get_result` | Metrics & trades of one result | `alpha-forge backtest report <result_id> --json` |
 | `run_backtest` | Run a backtest | `alpha-forge backtest run <symbol> --strategy <id> [--start] [--end] --json` |
-| `run_optimize` | Optimize parameters (Optuna) | `alpha-forge optimize run <symbol> --strategy <id> [--metric] [--trials] --json` |
+| `run_optimize` | Optimize parameters (Optuna) | `alpha-forge optimize run <symbol> --strategy <id> [--metric] [--trials] [--save] --json` |
+| `apply_optimization` | Apply an optimization result file to a strategy | `alpha-forge optimize apply <result_file> --to-strategy <id> --yes` |
 | `run_walk_forward` | Walk-forward (out-of-sample) optimization | `alpha-forge optimize walk-forward <symbol> --strategy <id> [--windows] [--metric] --json` |
 | `run_monte_carlo` | Monte Carlo from a saved result | `alpha-forge backtest monte-carlo <result_id> [--simulations] --json` |
 | `fetch_data` | Fetch & cache historical OHLCV (prereq for `run_backtest`) | `alpha-forge data fetch <symbol> [--period]` |
 | `save_strategy` | Register a strategy from its JSON **body** | `alpha-forge strategy save <tmpfile>` |
 | `generate_pinescript` | Generate Pine Script v6 source | `alpha-forge pine preview --strategy <id> [--with-webhook]` |
 | `forge_status` | Report capabilities/prerequisites (doctor + version) | `alpha-forge system doctor --json` |
+| `list_journals` | List strategies that have a journal | `alpha-forge journal list --json` |
+| `get_journal` | Full journal (snapshots, runs, tags, notes) of one strategy | `alpha-forge journal show <strategy_id> --json` |
+| `exploration_status` | Strategy-exploration coverage map (explored vs. untried) | `alpha-forge explore status [--goal] --json` |
+| `get_indicator` | Metadata for one technical indicator | `alpha-forge analyze indicator show <name> --json` |
 
 `save_strategy` takes the strategy-definition **JSON body** as a string (not a file path,
 which is more agent-friendly); it is written to a temp file before `strategy save`.
@@ -35,12 +40,21 @@ which is more agent-friendly); it is written to a temp file before `strategy sav
 is read-only and never fails when the binary is missing — it returns `binary_found: false`
 so a client can triage prerequisites before doing anything else.
 
+`run_optimize` saves the result by default (`save=true`) so its `saved_path` can be passed
+to `apply_optimization`, which applies the optimized parameters and saves
+`<strategy_id>_optimized` (it runs non-interactively with `--yes`). `get_indicator` returns
+indicator **metadata** only (description, parameters, output) — the CLI has no
+compute-over-symbol command, so it does not calculate the indicator on price data.
+journal/explore reads are exposed read-first; write-oriented and ml/pairs commands are not
+exposed yet.
+
 All tools carry MCP **tool annotations** (`readOnlyHint` for the read tools — the `list`/
-`get` lookups, `generate_pinescript`, and `forge_status`; `openWorldHint` for the run tools
-— `run_backtest` / `run_optimize` / `run_walk_forward` / `run_monte_carlo`, plus
-`fetch_data` (fetches external market data) and `save_strategy` (writes to the DB)) and
-return **structured output** — `structuredContent` with an object `outputSchema` —
-alongside the text result.
+`get` lookups, `generate_pinescript`, `forge_status`, `list_journals`, `get_journal`,
+`exploration_status`, and `get_indicator`; `openWorldHint` for the run/write tools —
+`run_backtest` / `run_optimize` / `run_walk_forward` / `run_monte_carlo`, plus
+`fetch_data` (fetches external market data), `save_strategy` and `apply_optimization`
+(write to the DB)) and return **structured output** — `structuredContent` with an object
+`outputSchema` — alongside the text result.
 
 ### Error envelope
 

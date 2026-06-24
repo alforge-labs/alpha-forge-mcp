@@ -23,6 +23,12 @@ _EXPECTED = {
     "fetch_data",
     "save_strategy",
     "forge_status",
+    # #27/#28: optimize apply + journal/explore/indicator の read 公開
+    "apply_optimization",
+    "list_journals",
+    "get_journal",
+    "exploration_status",
+    "get_indicator",
 }
 
 
@@ -143,3 +149,44 @@ def test_forge_statusは引数を取らない() -> None:
     by_name = {t.name: t for t in tools}
     schema = by_name["forge_status"].inputSchema
     assert schema.get("required", []) == []
+
+
+def test_apply_optimizationのスキーマにresult_fileとstrategy_idが必須() -> None:
+    # #27: optimize apply（result_file を戦略に適用する write tool）。
+    tools = asyncio.run(mcp.list_tools())
+    by_name = {t.name: t for t in tools}
+    required = set(by_name["apply_optimization"].inputSchema.get("required", []))
+    assert {"result_file", "strategy_id"}.issubset(required)
+
+
+def test_list_journalsは引数を取らない() -> None:
+    # #28: journal list（read）。
+    tools = asyncio.run(mcp.list_tools())
+    by_name = {t.name: t for t in tools}
+    schema = by_name["list_journals"].inputSchema
+    assert schema.get("required", []) == []
+
+
+def test_get_journalのスキーマにstrategy_idが必須() -> None:
+    # #28: journal show（read）。
+    tools = asyncio.run(mcp.list_tools())
+    by_name = {t.name: t for t in tools}
+    schema = by_name["get_journal"].inputSchema
+    assert "strategy_id" in schema.get("required", [])
+
+
+def test_exploration_statusはgoalが任意() -> None:
+    # #28: explore status（read）。goal はオプショナル。
+    tools = asyncio.run(mcp.list_tools())
+    by_name = {t.name: t for t in tools}
+    schema = by_name["exploration_status"].inputSchema
+    assert schema.get("required", []) == []
+    assert "goal" in schema.get("properties", {})
+
+
+def test_get_indicatorのスキーマにindicatorが必須() -> None:
+    # #28: analyze indicator show（read・指標メタ情報）。
+    tools = asyncio.run(mcp.list_tools())
+    by_name = {t.name: t for t in tools}
+    schema = by_name["get_indicator"].inputSchema
+    assert "indicator" in schema.get("required", [])

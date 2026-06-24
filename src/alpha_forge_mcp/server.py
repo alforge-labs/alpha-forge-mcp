@@ -3,11 +3,13 @@
 FastMCP に以下を登録する。いずれも ``ForgeClient`` を介して forge バイナリを
 subprocess で呼ぶ（コアロジックは含まない／露出しない）。
 
-- **Tools**（12）: read 系（list/get/generate_pinescript/forge_status）と run 系
+- **Tools**（17）: read 系（list/get/generate_pinescript/forge_status・#28 の
+  list_journals/get_journal/exploration_status/get_indicator）と run 系
   （run_backtest / run_optimize / run_walk_forward / run_monte_carlo / fetch_data /
-  save_strategy）。read 系 / run 系を ``ToolAnnotations`` で区別し（#16）、戻り値型
-  注釈から ``outputSchema`` を生成して structured output を返す（#17）。
-  #24/#25/#26 で WFT・MC・data fetch・strategy save・forge_status を追加。
+  save_strategy・#27 の apply_optimization）。read 系 / run 系を ``ToolAnnotations``
+  で区別し（#16）、戻り値型注釈から ``outputSchema`` を生成して structured output を
+  返す（#17）。#24/#25/#26 で WFT・MC・data fetch・strategy save・forge_status、
+  #27/#28 で optimize apply・journal/explore/indicator の read を追加。
 - **Resources**（#18）: read データを ``forge://...`` で公開し、Claude Code 等の
   @メンション参照を可能にする（Tool は能動実行用に併存）。
 - **Prompts**（#19）: 定型ワークフローを公開し、Claude Code のスラッシュコマンド化。
@@ -118,9 +120,16 @@ def run_optimize(
     strategy_id: str,
     metric: str | None = None,
     trials: int | None = None,
+    save: bool = True,
 ) -> Envelope:
-    """Optimize strategy parameters with Optuna for `symbol`. metric defaults to sharpe_ratio."""
-    return _get_client().run_optimize(symbol, strategy_id, metric=metric, trials=trials)
+    """Optimize strategy parameters with Optuna for `symbol`. metric defaults to sharpe_ratio.
+
+    save defaults to true so the result JSON is persisted (with `saved_path` in the
+    response) and can be fed to `apply_optimization`; pass save=false to skip saving.
+    """
+    return _get_client().run_optimize(
+        symbol, strategy_id, metric=metric, trials=trials, save=save
+    )
 
 
 @mcp.tool(annotations=_READ_ONLY)
@@ -196,6 +205,60 @@ def forge_status() -> Envelope:
     Never fails when the binary is missing — returns binary_found=false instead.
     """
     return _forge_status()
+
+
+# ---------------------------------------------------------------------------
+# optimize apply + journal/explore/indicator の read 公開（#27/#28）。
+# apply_optimization は戦略を上書き保存する write 系（run 注釈）、
+# 残り (list_journals/get_journal/exploration_status/get_indicator) は read 系。
+# 書き込み系・ml/pairs は今回スコープ外（段階追加）。
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool(annotations=_RUN)
+@envelope
+def apply_optimization(result_file: str, strategy_id: str) -> Envelope:
+    """Apply an optimization result file to a strategy, saving `<strategy_id>_optimized`.
+
+    result_file is the path produced by run_optimize(save=true) (its `saved_path`).
+    Runs non-interactively (--yes). Returns {result_file, strategy_id, output}.
+    """
+    return _get_client().apply_optimization(result_file, strategy_id)
+
+
+@mcp.tool(annotations=_READ_ONLY)
+@envelope
+def list_journals() -> Envelope:
+    """List strategies that have a journal (history of snapshots and runs)."""
+    return _get_client().list_journals()
+
+
+@mcp.tool(annotations=_READ_ONLY)
+@envelope
+def get_journal(strategy_id: str) -> Envelope:
+    """Get the full journal (snapshots, runs, tags, notes) for a strategy_id."""
+    return _get_client().get_journal(strategy_id)
+
+
+@mcp.tool(annotations=_READ_ONLY)
+@envelope
+def exploration_status(goal: str | None = None) -> Envelope:
+    """Show the strategy-exploration coverage map (explored vs. untried combos).
+
+    Optional `goal` filters by exploration goal; defaults to the "default" goal.
+    """
+    return _get_client().exploration_status(goal)
+
+
+@mcp.tool(annotations=_READ_ONLY)
+@envelope
+def get_indicator(indicator: str) -> Envelope:
+    """Get metadata for a technical indicator (description, parameters, output, example).
+
+    `indicator` is the indicator name (e.g. RSI, MACD). This is metadata only — the CLI
+    has no compute-over-symbol command — so it does not run a calculation on price data.
+    """
+    return _get_client().get_indicator(indicator)
 
 
 # ---------------------------------------------------------------------------
