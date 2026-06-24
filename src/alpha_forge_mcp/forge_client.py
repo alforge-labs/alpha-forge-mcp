@@ -93,6 +93,11 @@ def _classify_failure(args: list[str], proc: subprocess.CompletedProcess) -> For
 _IDENT_RE = re.compile(r"^[A-Za-z0-9^][A-Za-z0-9._\-=^:]*$")
 _MAX_IDENT_LEN = 256
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+# optimize apply の result_file はファイルパス（識別子検証では弾かれる ``/`` を含む）。
+# 引数注入（先頭ハイフン）と shell メタ文字・改行・空白を禁止しつつパス区切りは許す。
+# 実在チェックは CLI 側（``click.Path(exists=True)``）に委ねる（薄いラッパー方針）。
+_PATH_RE = re.compile(r"^[A-Za-z0-9~./][A-Za-z0-9._\-=/]*$")
+_MAX_PATH_LEN = 4096
 # data fetch の --period（例: 1y / 5y / 6m / 30d）または "max"。
 # 引数注入を防ぐため形式を厳密に制限する（先頭ハイフン等を弾く）。
 _PERIOD_RE = re.compile(r"^(?:max|\d+[ymwd])$", re.IGNORECASE)
@@ -168,6 +173,21 @@ def _validate_period(value: str) -> str:
         raise ForgeError(
             "invalid_argument", f"invalid period (expected e.g. 1y, 6m, 30d, max): {value!r}"
         )
+    return value
+
+
+def _validate_result_file(value: str) -> str:
+    """optimize apply の result_file パスを検証。不正なら ForgeError。
+
+    先頭ハイフン（引数注入）・shell メタ文字・改行・空白を禁止しつつ、パス区切り
+    （``/``）は許可する。実在チェックは forge CLI（``click.Path(exists=True)``）に委ねる。
+    """
+    if (
+        not isinstance(value, str)
+        or not (1 <= len(value) <= _MAX_PATH_LEN)
+        or _PATH_RE.match(value) is None
+    ):
+        raise ForgeError("invalid_argument", f"invalid result_file path: {value!r}")
     return value
 
 
@@ -327,8 +347,15 @@ class ForgeClient:
         strategy_id: str,
         metric: str | None = None,
         trials: int | None = None,
+        save: bool = True,
     ) -> Any:
-        """``forge optimize run <symbol> --strategy <id> [--metric ..] [--trials ..] --json``"""
+        """``forge optimize run <symbol> --strategy <id> [--metric ..] [--trials ..] [--save] --json``
+
+        #27: ``save`` は既定 True。``--save`` を付けないと CLI は結果 JSON を
+        ファイルに残さず、``apply_optimization`` (``optimize apply``) に渡す
+        result_file が得られない（結果が揮発する）。``--save --json`` 時は応答に
+        ``saved_path`` フィールドが含まれ、そのまま ``apply_optimization`` へ渡せる。
+        """  # noqa: E501
         args = [
             "optimize",
             "run",
@@ -341,7 +368,29 @@ class ForgeClient:
             args += ["--metric", _validate_identifier(metric)]
         if trials is not None:
             args += ["--trials", _validate_positive_int(trials, "trials")]
+        if save:
+            args.append("--save")
         return self._call(args, timeout=_OPTIMIZE_TIMEOUT)
+
+    def apply_optimization(self, result_file: str, strategy_id: str) -> dict[str, str]:
+        """``forge optimize apply <result_file> --to-strategy <id> --yes``（#27）。
+
+        ``run_optimize(save=True)`` が生成した最適化結果 JSON を戦略へ適用して
+        ``<strategy_id>_optimized`` として保存する。CLI は ``--json`` 非対応で出力は
+        テキストのため ``_call_text`` で取得し構造化 dict に包む。非対話環境では
+        ``--yes`` が無いと UsageError(exit 2) で停止するため必ず ``--yes`` を付与する。
+        result_file はファイルパスのため識別子検証ではなくパス検証を行う。
+        """
+        validated_file = _validate_result_file(result_file)
+        validated_id = _validate_identifier(strategy_id)
+        output = self._call_text(
+            ["optimize", "apply", validated_file, "--to-strategy", validated_id, "--yes"]
+        )
+        return {
+            "result_file": validated_file,
+            "strategy_id": validated_id,
+            "output": output,
+        }
 
     def generate_pinescript(
         self, strategy_id: str, with_webhook: bool = False
@@ -450,6 +499,41 @@ class ForgeClient:
             except OSError:
                 pass
         return {"output": output}
+
+    # ------------------------------------------------------------------
+    # #28: journal / explore / indicator の read 系公開（書き込み系は段階追加）。
+    # いずれも副作用なし・ローカル参照のみで ``--json`` 対応。
+    # ------------------------------------------------------------------
+
+    def list_journals(self) -> Any:
+        """``forge journal list --json``（ジャーナルを持つ戦略の一覧）。"""
+        return self._call(["journal", "list"])
+
+    def get_journal(self, strategy_id: str) -> Any:
+        """``forge journal show <strategy_id> --json``（戦略の全履歴）。"""
+        return self._call(["journal", "show", _validate_identifier(strategy_id)])
+
+    def exploration_status(self, goal: str | None = None) -> Any:
+        """``forge explore status [--goal <name>] --json``（探索の網羅マップ）。
+
+        ``goal`` 省略時は CLI 側で "default" goal にフォールバックする。
+        """
+        args = ["explore", "status"]
+        if goal is not None:
+            args += ["--goal", _validate_identifier(goal)]
+        return self._call(args)
+
+    def get_indicator(self, indicator: str) -> Any:
+        """``forge analyze indicator show <name> --json``（指標メタ情報）。
+
+        実 CLI には「銘柄データに指標を計算する」コマンドは存在せず、説明・
+        パラメータ・出力などの **メタ情報** を返す ``analyze indicator show`` のみが
+        read 系として存在する（issue 案の compute_indicator(symbol, ...) は実体が
+        無いため非採用）。
+        """
+        return self._call(
+            ["analyze", "indicator", "show", _validate_identifier(indicator)]
+        )
 
 
 def forge_status(forge_bin: str | None = None) -> dict[str, Any]:

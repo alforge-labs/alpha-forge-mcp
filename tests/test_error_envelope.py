@@ -35,6 +35,12 @@ _TOOL_CASES = [
     (server_mod.run_monte_carlo, "run_monte_carlo", ("run_abc",)),
     (server_mod.fetch_data, "fetch_data", ("AAPL",)),
     (server_mod.save_strategy, "save_strategy", ('{"strategy_id": "x"}',)),
+    # #27/#28: optimize apply + journal/explore/indicator の read 公開
+    (server_mod.apply_optimization, "apply_optimization", ("/r.json", "sma_v1")),
+    (server_mod.list_journals, "list_journals", ()),
+    (server_mod.get_journal, "get_journal", ("sma_v1",)),
+    (server_mod.exploration_status, "exploration_status", ()),
+    (server_mod.get_indicator, "get_indicator", ("RSI",)),
 ]
 
 
@@ -183,6 +189,11 @@ class TestEnvelopeOutputSchema:
             "fetch_data",
             "save_strategy",
             "forge_status",
+            "apply_optimization",
+            "list_journals",
+            "get_journal",
+            "exploration_status",
+            "get_indicator",
         }
         for name in expected:
             schema = tools[name].outputSchema
