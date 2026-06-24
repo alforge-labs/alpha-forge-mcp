@@ -21,18 +21,54 @@ subprocess で呼ぶ（コアロジックは含まない／露出しない）。
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from importlib.metadata import PackageNotFoundError, version
-from typing import Any
+from typing import Any, Literal
 
-from mcp.server.fastmcp import FastMCP
+import anyio
+from mcp.server.fastmcp import Context, FastMCP
 from mcp.types import ToolAnnotations
 
 from alpha_forge_mcp.envelope import Envelope, envelope
 from alpha_forge_mcp.forge_client import ForgeClient
 from alpha_forge_mcp.forge_client import forge_status as _forge_status
 
+# issue #29: サーバ instructions でワークフロー全体像をクライアント（Claude 等）へ提示する。
+# initialize 応答に載り、エージェントが「どの tool をどの順で呼ぶか」を最初に把握できる。
+_INSTRUCTIONS = (
+    "AlphaForge への薄い MCP ラッパーです（forge CLI を subprocess 実行）。"
+    "標準ワークフロー: "
+    "1) forge_status で前提（バイナリ/認証/プラン）を確認 → "
+    "2) fetch_data で対象 symbol のヒストリカルデータを取得 → "
+    "3) run_backtest で戦略を検証 → "
+    "4) run_optimize（save=True 既定）でパラメータ最適化 → "
+    "5) run_walk_forward で out-of-sample のロバスト性を確認 → "
+    "6) apply_optimization で最適化結果を戦略へ適用 → "
+    "7) generate_pinescript で TradingView 用 Pine Script v6 を出力。"
+    " 全 tool は {ok, data, error} の envelope を返す（例外を投げない）。"
+    " run/optimize/walk-forward は長時間（最大数百秒）かかり、対応クライアントでは"
+    " 進捗（progress）通知を送る。read 系（list_*/get_*/exploration_status/get_indicator/"
+    "forge_status）は副作用なしで安全に呼べる。"
+)
+
 # name は PyPI パッケージ名（alpha-forge-mcp）と一致させる（issue #3）。
-mcp = FastMCP("alpha-forge-mcp")
+mcp = FastMCP("alpha-forge-mcp", instructions=_INSTRUCTIONS)
+
+# issue #29: 最適化対象メトリクスを Literal で enum 化し inputSchema に enum 制約を出す。
+# forge の backtest メトリクス dict のキー（src/alpha_forge/backtest/metrics）のうち、
+# 「大きいほど良い」最適化目的として妥当な代表値に絞る。既存テスト/呼び出しが渡す
+# sharpe_ratio を含む。値は forge CLI の --metric にそのまま渡される。
+OptimizeMetric = Literal[
+    "sharpe_ratio",
+    "sortino_ratio",
+    "calmar_ratio",
+    "total_return_pct",
+    "cagr_pct",
+    "profit_factor",
+    "win_rate_pct",
+    "expectancy_pct",
+    "omega_ratio",
+]
 
 # issue #3: FastMCP はコンストラクタで version を受け取れず、未設定だと低レベル
 # Server が mcp ライブラリ自身の版を serverInfo.version として返す。自パッケージの
@@ -59,6 +95,30 @@ def _get_client() -> ForgeClient:
     if _client is None:
         _client = ForgeClient()
     return _client
+
+
+async def _run_with_progress(
+    ctx: Context | None,
+    label: str,
+    work: Callable[[], dict[str, Any]],
+) -> dict[str, Any]:
+    """長時間ジョブを実行し、対応クライアントへ progress を送る（#29）。
+
+    ``ForgeClient`` の呼び出しは ``subprocess.run`` でブロックするため、
+    ``anyio.to_thread.run_sync`` でワーカースレッドへ退避し、その間イベント
+    ループ（progress 通知や他リクエスト）を塞がない。進捗は subprocess の
+    途中経過を取得できないため「開始(0/1)→完了(1/1)」の確定ブラケットで送る
+    （真の途中経過の捏造はしない）。``ctx`` 未指定（progress 非対応クライアント
+    やテスト）でもジョブ自体は通常どおり実行する。
+
+    例外はここでは握らず ``@envelope`` まで伝播させ、統一 envelope 契約を保つ。
+    """
+    if ctx is not None:
+        await ctx.report_progress(progress=0.0, total=1.0, message=f"{label} 開始")
+    result = await anyio.to_thread.run_sync(work)
+    if ctx is not None:
+        await ctx.report_progress(progress=1.0, total=1.0, message=f"{label} 完了")
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -103,32 +163,47 @@ def get_result(result_id: str) -> Envelope:
 
 @mcp.tool(annotations=_RUN)
 @envelope
-def run_backtest(
+async def run_backtest(
     symbol: str,
     strategy_id: str,
     start: str | None = None,
     end: str | None = None,
+    ctx: Context | None = None,
 ) -> Envelope:
-    """Run a backtest for `symbol` with a registered strategy. Optional dates are YYYY-MM-DD."""
-    return _get_client().run_backtest(symbol, strategy_id, start=start, end=end)
+    """Run a backtest for `symbol` with a registered strategy. Optional dates are YYYY-MM-DD.
+
+    Prerequisite: call `fetch_data` for the symbol first so the OHLCV cache exists.
+    Long-running: up to a 300-second timeout; reports progress to capable clients.
+    """
+    return await _run_with_progress(
+        ctx,
+        "backtest",
+        lambda: _get_client().run_backtest(symbol, strategy_id, start=start, end=end),
+    )
 
 
 @mcp.tool(annotations=_RUN)
 @envelope
-def run_optimize(
+async def run_optimize(
     symbol: str,
     strategy_id: str,
-    metric: str | None = None,
+    metric: OptimizeMetric | None = None,
     trials: int | None = None,
     save: bool = True,
+    ctx: Context | None = None,
 ) -> Envelope:
     """Optimize strategy parameters with Optuna for `symbol`. metric defaults to sharpe_ratio.
 
     save defaults to true so the result JSON is persisted (with `saved_path` in the
     response) and can be fed to `apply_optimization`; pass save=false to skip saving.
+    Long-running: up to a 600-second timeout; reports progress to capable clients.
     """
-    return _get_client().run_optimize(
-        symbol, strategy_id, metric=metric, trials=trials, save=save
+    return await _run_with_progress(
+        ctx,
+        "optimize",
+        lambda: _get_client().run_optimize(
+            symbol, strategy_id, metric=metric, trials=trials, save=save
+        ),
     )
 
 
@@ -147,53 +222,84 @@ def generate_pinescript(strategy_id: str, with_webhook: bool = False) -> Envelop
 
 @mcp.tool(annotations=_RUN)
 @envelope
-def run_walk_forward(
+async def run_walk_forward(
     symbol: str,
     strategy_id: str,
     windows: int | None = None,
-    metric: str | None = None,
+    metric: OptimizeMetric | None = None,
+    ctx: Context | None = None,
 ) -> Envelope:
     """Run walk-forward optimization for `symbol` (out-of-sample robustness check).
 
-    windows defaults to 5, metric to sharpe_ratio. Required by the optimize_and_verify
-    workflow to compare in-sample vs out-of-sample behaviour.
+    windows defaults to 5, metric to sharpe_ratio. Run it after run_optimize to compare
+    in-sample vs out-of-sample behaviour (the optimize_and_verify workflow).
+    Long-running: up to a 600-second timeout; reports progress to capable clients.
     """
-    return _get_client().run_walk_forward(
-        symbol, strategy_id, windows=windows, metric=metric
+    return await _run_with_progress(
+        ctx,
+        "walk-forward",
+        lambda: _get_client().run_walk_forward(
+            symbol, strategy_id, windows=windows, metric=metric
+        ),
     )
 
 
 @mcp.tool(annotations=_RUN)
 @envelope
-def run_monte_carlo(result_id: str, simulations: int | None = None) -> Envelope:
+async def run_monte_carlo(
+    result_id: str,
+    simulations: int | None = None,
+    ctx: Context | None = None,
+) -> Envelope:
     """Run a Monte Carlo simulation from a saved backtest result (resamples its trades).
 
-    result_id = strategy_id or run_id. simulations defaults to 1000. Returns ruin
-    probability, equity percentiles, and drawdown distribution for risk assessment.
+    Prerequisite: a saved result (run_backtest/run_optimize with save) — result_id =
+    strategy_id or run_id. simulations defaults to 1000. Returns ruin probability, equity
+    percentiles, and drawdown distribution for risk assessment.
+    Long-running: reports progress to capable clients; has an execution timeout.
     """
-    return _get_client().run_monte_carlo(result_id, simulations=simulations)
+    return await _run_with_progress(
+        ctx,
+        "monte-carlo",
+        lambda: _get_client().run_monte_carlo(result_id, simulations=simulations),
+    )
 
 
 @mcp.tool(annotations=_RUN)
 @envelope
-def fetch_data(symbol: str, period: str | None = None) -> Envelope:
+async def fetch_data(
+    symbol: str,
+    period: str | None = None,
+    ctx: Context | None = None,
+) -> Envelope:
     """Fetch & cache historical OHLCV for `symbol` (prerequisite for run_backtest).
 
     period is e.g. 1y / 5y / 6m / 30d / max (defaults to 1y). Returns {symbol, period,
-    output}. The CLI has no --start/--end, so only period is exposed.
+    output}. The CLI has no --start/--end, so only period is exposed. Run this before
+    run_backtest. Reports progress to capable clients; has an execution timeout.
     """
-    return _get_client().fetch_data(symbol, period=period)
+    return await _run_with_progress(
+        ctx,
+        "fetch-data",
+        lambda: _get_client().fetch_data(symbol, period=period),
+    )
 
 
 @mcp.tool(annotations=_RUN)
 @envelope
-def save_strategy(json_body: str) -> Envelope:
+async def save_strategy(json_body: str, ctx: Context | None = None) -> Envelope:
     """Register a strategy from its JSON body (not a file path; agent-friendly).
 
     Pass the full strategy-definition JSON as a string; it is validated as a JSON object
-    and written to a temp file before `strategy save`. Returns {output}.
+    and written to a temp file before `strategy save`. Returns {output}. A registered
+    strategy is the prerequisite for run_backtest/run_optimize. Reports progress to
+    capable clients; has an execution timeout.
     """
-    return _get_client().save_strategy(json_body)
+    return await _run_with_progress(
+        ctx,
+        "save-strategy",
+        lambda: _get_client().save_strategy(json_body),
+    )
 
 
 @mcp.tool(annotations=_READ_ONLY)
@@ -217,13 +323,23 @@ def forge_status() -> Envelope:
 
 @mcp.tool(annotations=_RUN)
 @envelope
-def apply_optimization(result_file: str, strategy_id: str) -> Envelope:
+async def apply_optimization(
+    result_file: str,
+    strategy_id: str,
+    ctx: Context | None = None,
+) -> Envelope:
     """Apply an optimization result file to a strategy, saving `<strategy_id>_optimized`.
 
-    result_file is the path produced by run_optimize(save=true) (its `saved_path`).
-    Runs non-interactively (--yes). Returns {result_file, strategy_id, output}.
+    Prerequisite: run_optimize(save=true) — result_file is its `saved_path`. Runs
+    non-interactively (--yes). Returns {result_file, strategy_id, output}. Follow up by
+    generating Pine Script for `<strategy_id>_optimized`. Reports progress to capable
+    clients; has an execution timeout.
     """
-    return _get_client().apply_optimization(result_file, strategy_id)
+    return await _run_with_progress(
+        ctx,
+        "apply-optimization",
+        lambda: _get_client().apply_optimization(result_file, strategy_id),
+    )
 
 
 @mcp.tool(annotations=_READ_ONLY)

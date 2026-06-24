@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import functools
+import inspect
 from collections.abc import Callable
 from typing import Any, TypedDict, TypeVar
 
@@ -67,22 +68,44 @@ def error_envelope(code: str, message: str, detail: str | None = None) -> Envelo
 _F = TypeVar("_F", bound=Callable[..., dict[str, Any]])
 
 
-def envelope(fn: _F) -> Callable[..., Envelope]:
-    """tool 関数を error envelope 契約で包むデコレータ。
+def _to_envelope(exc: Exception) -> Envelope:
+    """例外を失敗 envelope に正規化する（ForgeError は code/message を温存）。"""
+    if isinstance(exc, ForgeError):
+        return error_envelope(exc.code, exc.message)
+    # ForgeError 以外（バグ等）も自由文 ToolError にせず execution_failed に正規化。
+    return error_envelope("execution_failed", str(exc))
+
+
+def envelope(fn: _F) -> Callable[..., Any]:
+    """tool 関数を error envelope 契約で包むデコレータ（同期・非同期の両対応）。
 
     - 正常終了: 戻り値（dict）を ``ok_envelope`` でラップ。
     - ``ForgeError``: ``code`` / ``message`` を構造化フィールドとして載せる。
     - その他の例外（バグ等）: ``execution_failed`` に正規化して契約を破らない。
       例外を素通しさせると FastMCP が自由文 ToolError に再ラップしてしまう。
+
+    progress 通知を ``await`` する run 系 tool（#29）は async 関数になるため、
+    ラップ対象がコルーチン関数なら ``await`` する async wrapper を返す。これにより
+    FastMCP の ``inspect.iscoroutinefunction`` 判定（await 要否の分岐）が正しく働く。
+    同期 tool は従来どおり同期 wrapper のままで契約は不変。
     """
+
+    if inspect.iscoroutinefunction(fn):
+
+        @functools.wraps(fn)
+        async def async_wrapper(*args: Any, **kwargs: Any) -> Envelope:
+            try:
+                return ok_envelope(await fn(*args, **kwargs))
+            except Exception as exc:  # noqa: BLE001 - 契約維持のため全例外を envelope 化する
+                return _to_envelope(exc)
+
+        return async_wrapper
 
     @functools.wraps(fn)
     def wrapper(*args: Any, **kwargs: Any) -> Envelope:
         try:
             return ok_envelope(fn(*args, **kwargs))
-        except ForgeError as exc:
-            return error_envelope(exc.code, exc.message)
         except Exception as exc:  # noqa: BLE001 - 契約維持のため全例外を envelope 化する
-            return error_envelope("execution_failed", str(exc))
+            return _to_envelope(exc)
 
-    return wrapper  # type: ignore[return-value]
+    return wrapper

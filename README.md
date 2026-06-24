@@ -48,6 +48,28 @@ compute-over-symbol command, so it does not calculate the indicator on price dat
 journal/explore reads are exposed read-first; write-oriented and ml/pairs commands are not
 exposed yet.
 
+The `metric` argument of `run_optimize` / `run_walk_forward` is a constrained **enum**
+(`sharpe_ratio` (default), `sortino_ratio`, `calmar_ratio`, `total_return_pct`, `cagr_pct`,
+`profit_factor`, `win_rate_pct`, `expectancy_pct`, `omega_ratio`) so clients can pick a
+valid optimization target without guessing. Each tool's description states its prerequisite
+(e.g. `run_backtest` needs `fetch_data` first; `apply_optimization` needs a
+`run_optimize(save=true)` result) and its follow-up.
+
+### Server instructions & long-running jobs
+
+The server advertises `instructions` (surfaced in the MCP `initialize` response) describing
+the end-to-end workflow — `forge_status` → `fetch_data` → `run_backtest` → `run_optimize`
+→ `run_walk_forward` → `apply_optimization` → `generate_pinescript` — so an agent knows
+which tools to call and in what order.
+
+The run/fetch/save/apply tools are long-running (`run_backtest` up to 300 s, `run_optimize`
+/ `run_walk_forward` up to 600 s, others bounded by the default timeout — stated in each
+tool's description). They report **progress** to capable clients via MCP progress
+notifications (a `start` → `complete` bracket; the underlying `alpha-forge` subprocess does
+not expose intermediate progress) and run the blocking call off the event loop so the
+server stays responsive. The timeout is enforced by `alpha-forge`; on expiry the tool
+returns the `timeout` error code, which is safe to retry.
+
 All tools carry MCP **tool annotations** (`readOnlyHint` for the read tools — the `list`/
 `get` lookups, `generate_pinescript`, `forge_status`, `list_journals`, `get_journal`,
 `exploration_status`, and `get_indicator`; `openWorldHint` for the run/write tools —
