@@ -13,6 +13,9 @@ client 層（ForgeClient）は従来どおり ForgeError を raise する（test
 
 from __future__ import annotations
 
+import asyncio
+import inspect
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -23,6 +26,7 @@ from alpha_forge_mcp.errors import ForgeError, ForgeNotFoundError
 # (tool 関数, client メソッド名, 呼び出し引数) の対応表。
 # 公開 tool すべてを同一契約で網羅する（#24/#25/#26 の拡張 tool 含む）。
 # forge_status は client メソッドでなくモジュール関数のため別途検証する。
+# #29 で run 系は progress 送出のため async になった（_invoke が await を吸収する）。
 _TOOL_CASES = [
     (server_mod.list_strategies, "list_strategies", ()),
     (server_mod.get_strategy, "get_strategy", ("sma_v1",)),
@@ -44,6 +48,14 @@ _TOOL_CASES = [
 ]
 
 
+def _invoke(tool_fn: Any, *args: Any) -> Any:
+    """同期/非同期どちらの tool でも envelope（dict）を取り出す（#29）。"""
+    result = tool_fn(*args)
+    if inspect.iscoroutine(result):
+        return asyncio.run(result)
+    return result
+
+
 def _mock_client(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
     client = MagicMock()
     monkeypatch.setattr(server_mod, "_get_client", lambda: client)
@@ -61,7 +73,7 @@ class TestSuccessEnvelope:
         payload = {"strategies": [], "count": 0}
         getattr(client, method).return_value = payload
 
-        result = tool_fn(*args)
+        result = _invoke(tool_fn, *args)
 
         assert result["ok"] is True
         assert result["data"] == payload
@@ -81,7 +93,7 @@ class TestErrorEnvelope:
             "strategy_not_found", "`forge ...` failed: 戦略が見つかりません"
         )
 
-        result = tool_fn(*args)
+        result = _invoke(tool_fn, *args)
 
         assert result["ok"] is False
         assert result["data"] is None
@@ -99,7 +111,7 @@ class TestErrorEnvelope:
         client = _mock_client(monkeypatch)
         getattr(client, method).side_effect = ForgeError("timeout", "timed out")
 
-        result = tool_fn(*args)  # raise しないこと自体を検証
+        result = _invoke(tool_fn, *args)  # raise しないこと自体を検証
 
         assert result["ok"] is False
         assert result["error"]["code"] == "timeout"
