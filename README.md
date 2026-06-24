@@ -1,5 +1,9 @@
 # alpha-forge-mcp
 
+> **The MCP server for [AlphaForge](https://alforgelabs.com)** — the agent-native quant CLI: write strategies in JSON, optimize with Optuna TPE, validate with walk-forward, export to TradingView Pine v6. This server lets your AI agent drive the whole pipeline over MCP. → **[Try AlphaForge free](https://alforgelabs.com)**
+
+---
+
 A [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server that exposes the
 **AlphaForge `alpha-forge` CLI** to AI coding agents — Claude Code, Cursor, Codex, and any
 MCP-capable client — over **stdio**.
