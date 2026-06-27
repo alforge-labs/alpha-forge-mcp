@@ -156,9 +156,13 @@ def list_results(strategy_id: str | None = None) -> Envelope:
 
 @mcp.tool(annotations=_READ_ONLY)
 @envelope
-def get_result(result_id: str) -> Envelope:
-    """Get metrics and trades for a saved backtest result (result_id = strategy_id or run_id)."""
-    return _get_client().get_result(result_id)
+def get_result(result_id: str, summary: bool = True) -> Envelope:
+    """Get metrics for a saved backtest result (result_id = strategy_id or run_id).
+
+    summary=True (default) folds heavy arrays (trades / equity_curve / buy_hold_curve)
+    into counts to save context; pass summary=false to get the full arrays.
+    """
+    return _get_client().get_result(result_id, summary=summary)
 
 
 @mcp.tool(annotations=_RUN)
@@ -168,17 +172,22 @@ async def run_backtest(
     strategy_id: str,
     start: str | None = None,
     end: str | None = None,
+    summary: bool = True,
     ctx: Context | None = None,
 ) -> Envelope:
     """Run a backtest for `symbol` with a registered strategy. Optional dates are YYYY-MM-DD.
 
     Prerequisite: call `fetch_data` for the symbol first so the OHLCV cache exists.
+    summary=True (default) omits heavy arrays (trades / per-bar series) to save context;
+    pass summary=false for the full result.
     Long-running: up to a 300-second timeout; reports progress to capable clients.
     """
     return await _run_with_progress(
         ctx,
         "backtest",
-        lambda: _get_client().run_backtest(symbol, strategy_id, start=start, end=end),
+        lambda: _get_client().run_backtest(
+            symbol, strategy_id, start=start, end=end, summary=summary
+        ),
     )
 
 

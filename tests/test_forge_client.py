@@ -199,6 +199,7 @@ class TestToolArgs:
         assert cmd == ["/fake/forge", "backtest", "report", "run_abc", "--json"]
 
     def test_run_backtest_symbolはpositional_strategyはフラグ(self) -> None:
+        # summary 既定 True で --summary を付与する（issue #36）
         cmd = self._capture(
             lambda c: c.run_backtest("AAPL", "sma_v1", start="2020-01-01")
         )
@@ -211,6 +212,7 @@ class TestToolArgs:
             "sma_v1",
             "--start",
             "2020-01-01",
+            "--summary",
             "--json",
         ]
 
