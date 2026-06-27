@@ -23,8 +23,8 @@ actually run.
 | `list_strategies` | List registered strategies | `alpha-forge strategy list --json` |
 | `get_strategy` | Full JSON of one strategy | `alpha-forge strategy show <id> --json` |
 | `list_results` | List saved backtest results | `alpha-forge backtest list [--strategy <id>] --json` |
-| `get_result` | Metrics & trades of one result | `alpha-forge backtest report <result_id> --json` |
-| `run_backtest` | Run a backtest | `alpha-forge backtest run <symbol> --strategy <id> [--start] [--end] --json` |
+| `get_result` | Metrics of one result (heavy arrays folded into counts by default; `summary=false` for full) | `alpha-forge backtest report <result_id> --json` |
+| `run_backtest` | Run a backtest (`summary=true` by default omits heavy arrays) | `alpha-forge backtest run <symbol> --strategy <id> [--start] [--end] [--summary] --json` |
 | `run_optimize` | Optimize parameters (Optuna) | `alpha-forge optimize run <symbol> --strategy <id> [--metric] [--trials] [--save] --json` |
 | `apply_optimization` | Apply an optimization result file to a strategy | `alpha-forge optimize apply <result_file> --to-strategy <id> --yes` |
 | `run_walk_forward` | Walk-forward (out-of-sample) optimization | `alpha-forge optimize walk-forward <symbol> --strategy <id> [--windows] [--metric] --json` |

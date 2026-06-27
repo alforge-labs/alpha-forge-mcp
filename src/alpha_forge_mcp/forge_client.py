@@ -216,6 +216,29 @@ def _normalize_strategy_row(row: dict[str, Any]) -> dict[str, Any]:
     return normalized
 
 
+# issue #36: per-trade / per-bar 系の重い配列。エージェントの文脈を圧迫するため
+# summary モードでは件数（``<key>_count``）へ置換する。
+_HEAVY_ARRAY_KEYS = ("trades", "equity_curve", "buy_hold_curve")
+
+
+def _summarize_result(data: Any) -> Any:
+    """``backtest report`` の重い配列フィールドを件数に置換した dict を返す（issue #36）。
+
+    ``backtest report`` には CLI 側の ``--summary`` が無いため、MCP 側で
+    ``trades`` / ``equity_curve`` / ``buy_hold_curve`` を ``<key>_count`` に畳む。
+    dict でない・対象キーが無い場合はそのまま返す。
+    """
+    if not isinstance(data, dict):
+        return data
+    out = dict(data)
+    for key in _HEAVY_ARRAY_KEYS:
+        value = out.get(key)
+        if isinstance(value, list):
+            out[f"{key}_count"] = len(value)
+            del out[key]
+    return out
+
+
 class ForgeClient:
     """forge バイナリを ``--json`` で叩く薄いクライアント。"""
 
@@ -316,9 +339,14 @@ class ForgeClient:
             args += ["--strategy", _validate_identifier(strategy_id)]
         return self._call(args)
 
-    def get_result(self, result_id: str) -> Any:
-        """``forge backtest report <result_id> --json``"""
-        return self._call(["backtest", "report", _validate_identifier(result_id)])
+    def get_result(self, result_id: str, *, summary: bool = True) -> Any:
+        """``forge backtest report <result_id> --json``
+
+        summary=True（既定）のとき、重い配列（trades / equity_curve / buy_hold_curve）を
+        件数へ畳んで返す（issue #36）。全配列が必要なときは summary=False。
+        """
+        data = self._call(["backtest", "report", _validate_identifier(result_id)])
+        return _summarize_result(data) if summary else data
 
     def run_backtest(
         self,
@@ -326,8 +354,14 @@ class ForgeClient:
         strategy_id: str,
         start: str | None = None,
         end: str | None = None,
+        *,
+        summary: bool = True,
     ) -> Any:
-        """``forge backtest run <symbol> --strategy <id> [--start ..] [--end ..] --json``"""
+        """``forge backtest run <symbol> --strategy <id> [--start] [--end] [--summary] --json``
+
+        summary=True（既定）のとき CLI の ``--summary`` を付け、重い配列フィールドを
+        除外した結果を返す（issue #36）。全配列が必要なときは summary=False。
+        """
         args = [
             "backtest",
             "run",
@@ -339,6 +373,8 @@ class ForgeClient:
             args += ["--start", _validate_date(start)]
         if end:
             args += ["--end", _validate_date(end)]
+        if summary:
+            args.append("--summary")
         return self._call(args, timeout=_BACKTEST_TIMEOUT)
 
     def run_optimize(
