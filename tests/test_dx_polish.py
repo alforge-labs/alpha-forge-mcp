@@ -56,6 +56,14 @@ class TestServerInstructions:
         ):
             assert token in text, token
 
+    def test_instructionsにsave_strategyとrun_monte_carloが含まれる(self) -> None:
+        # #39: 標準ワークフローに戦略登録（save_strategy）とリスク評価（run_monte_carlo）を
+        # 1 句ずつ補い、エージェントが登録〜リスク評価まで一気通貫で辿れるようにする。
+        opts = mcp._mcp_server.create_initialization_options()
+        text = opts.instructions or ""
+        assert "save_strategy" in text
+        assert "run_monte_carlo" in text
+
 
 class TestMetricEnum:
     """#29-1: metric を Literal enum 化し inputSchema に enum 制約を出す。"""
@@ -81,6 +89,16 @@ class TestMetricEnum:
         enum = _find_enum(tools["run_optimize"].inputSchema["properties"]["metric"])
         assert "sharpe_ratio" in (enum or [])
 
+    @pytest.mark.parametrize("name", sorted(_METRIC_TOOLS))
+    def test_metric説明にCLIより狭いenumである旨がある(self, name: str) -> None:
+        # #39: enum は CLI の --metric より狭い 9 値限定（意図的）。エージェントが
+        # 「enum 外の値も CLI なら通る」ことを description から読めるよう明記する。
+        tools = _tools_by_name()
+        metric_schema = tools[name].inputSchema["properties"]["metric"]
+        desc = (_find_description(metric_schema) or "").lower()
+        assert "cli" in desc, (name, desc)
+        assert "narrow" in desc, (name, desc)
+
 
 def _find_enum(schema: dict) -> list | None:
     """JSON Schema 片の中から最初に見つかる enum を返す（anyOf/oneOf を再帰探索）。"""
@@ -91,6 +109,20 @@ def _find_enum(schema: dict) -> list | None:
     for key in ("anyOf", "oneOf", "allOf"):
         for sub in schema.get(key, []):
             found = _find_enum(sub)
+            if found is not None:
+                return found
+    return None
+
+
+def _find_description(schema: dict) -> str | None:
+    """JSON Schema 片の中から最初に見つかる description を返す（anyOf/oneOf を再帰探索）。"""
+    if not isinstance(schema, dict):
+        return None
+    if isinstance(schema.get("description"), str):
+        return schema["description"]
+    for key in ("anyOf", "oneOf", "allOf"):
+        for sub in schema.get(key, []):
+            found = _find_description(sub)
             if found is not None:
                 return found
     return None
@@ -108,6 +140,15 @@ class TestToolDescriptions:
         tools = _tools_by_name()
         desc = tools["run_optimize"].description or ""
         assert "apply_optimization" in desc
+
+    def test_run_optimizeの説明にtrials既定値が明記される(self) -> None:
+        # #39: run_walk_forward は「windows defaults to 5」、run_monte_carlo は
+        # 「simulations defaults to 1000」と書くのに run_optimize は trials 既定が
+        # 抜けていた（非対称）。CLI の既定（200）を description に明記して揃える。
+        tools = _tools_by_name()
+        desc = (tools["run_optimize"].description or "").lower()
+        assert "trials" in desc
+        assert "200" in desc
 
     @pytest.mark.parametrize("name", sorted(_PROGRESS_TOOLS))
     def test_run系の説明にtimeoutが明記される(self, name: str) -> None:

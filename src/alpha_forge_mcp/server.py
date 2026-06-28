@@ -45,12 +45,14 @@ _INSTRUCTIONS = (
     "AlphaForge への薄い MCP ラッパーです（forge CLI を subprocess 実行）。"
     "標準ワークフロー: "
     "1) forge_status で前提（バイナリ/認証/プラン）を確認 → "
-    "2) fetch_data で対象 symbol のヒストリカルデータを取得 → "
-    "3) run_backtest で戦略を検証 → "
-    "4) run_optimize（save=True 既定）でパラメータ最適化 → "
-    "5) run_walk_forward で out-of-sample のロバスト性を確認 → "
-    "6) apply_optimization で最適化結果を戦略へ適用 → "
-    "7) generate_pinescript で TradingView 用 Pine Script v6 を出力。"
+    "2) save_strategy で戦略を JSON 本文から登録（既存戦略を使う場合は省略可）→ "
+    "3) fetch_data で対象 symbol のヒストリカルデータを取得 → "
+    "4) run_backtest で戦略を検証 → "
+    "5) run_optimize（save=True 既定）でパラメータ最適化 → "
+    "6) run_walk_forward で out-of-sample のロバスト性を確認 → "
+    "7) run_monte_carlo で保存済み結果から破産確率などのリスクを評価 → "
+    "8) apply_optimization で最適化結果を戦略へ適用 → "
+    "9) generate_pinescript で TradingView 用 Pine Script v6 を出力。"
     " 全 tool は {ok, data, error} の envelope を返す（例外を投げない）。"
     " run/optimize/walk-forward は長時間（最大数百秒）かかり、対応クライアントでは"
     " 進捗（progress）通知を送る。read 系（list_*/get_*/exploration_status/get_indicator/"
@@ -139,7 +141,7 @@ EndDateArg = Annotated[
 TrialsArg = Annotated[
     int | None,
     Field(
-        description="Number of Optuna trials (>= 1). Defaults to the alpha-forge default.",
+        description="Number of Optuna trials (>= 1). Defaults to 200 (the alpha-forge default).",
         ge=1,
         examples=[50],
     ),
@@ -164,7 +166,10 @@ MetricArg = Annotated[
     OptimizeMetric | None,
     Field(
         description=(
-            "Optimization target metric (enum; bigger is better). Defaults to sharpe_ratio."
+            "Optimization target metric (enum; bigger is better). Defaults to sharpe_ratio. "
+            "This enum is intentionally narrower than the alpha-forge CLI's --metric, which "
+            "accepts a wider set; it is curated to the bigger-is-better metrics that make sense "
+            "as an optimization objective."
         ),
     ),
 ]
@@ -368,8 +373,9 @@ async def run_optimize(
 ) -> Envelope:
     """Optimize strategy parameters with Optuna for `symbol`. metric defaults to sharpe_ratio.
 
-    save defaults to true so the result JSON is persisted (with `saved_path` in the
-    response) and can be fed to `apply_optimization`; pass save=false to skip saving.
+    trials defaults to 200 (the alpha-forge optimizer default). save defaults to true so the
+    result JSON is persisted (with `saved_path` in the response) and can be fed to
+    `apply_optimization`; pass save=false to skip saving.
     Long-running: up to a 600-second timeout; reports progress to capable clients.
     """
     return await _run_with_progress(
@@ -587,6 +593,37 @@ def resource_results() -> str:
 def resource_result(result_id: str) -> str:
     """Metrics and trades for one saved backtest result by result_id."""
     return _as_json(_get_client().get_result(result_id))
+
+
+# issue #39: read 系 tool（list_journals / get_journal / exploration_status / get_indicator）
+# に対応する resource を追加し、tool と resource を対称化する（既存 strategies/results に倣う）。
+# いずれも既存の ForgeClient メソッドへ委譲するだけで新規ロジックは持たない。
+# なお indicator は「一覧」を返す ForgeClient メソッドが無い（CLI の analyze indicator list は
+# 未ラップ）ため、forge://indicators の collection resource は追加せず template のみとする。
+
+
+@mcp.resource("forge://journals", mime_type="application/json")
+def resource_journals() -> str:
+    """All strategies that have a journal (same payload as the list_journals tool)."""
+    return _as_json(_get_client().list_journals())
+
+
+@mcp.resource("forge://journal/{strategy_id}", mime_type="application/json")
+def resource_journal(strategy_id: str) -> str:
+    """Full journal (snapshots, runs, tags, notes) for one strategy by strategy_id."""
+    return _as_json(_get_client().get_journal(strategy_id))
+
+
+@mcp.resource("forge://exploration", mime_type="application/json")
+def resource_exploration() -> str:
+    """Strategy-exploration coverage map for the default goal (exploration_status tool)."""
+    return _as_json(_get_client().exploration_status())
+
+
+@mcp.resource("forge://indicator/{indicator}", mime_type="application/json")
+def resource_indicator(indicator: str) -> str:
+    """Metadata for one technical indicator by name (same payload as the get_indicator tool)."""
+    return _as_json(_get_client().get_indicator(indicator))
 
 
 # ---------------------------------------------------------------------------
