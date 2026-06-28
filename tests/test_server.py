@@ -38,6 +38,18 @@ def test_全toolが登録される() -> None:
     assert _EXPECTED.issubset(names), names
 
 
+def test_main_prints_cta_to_stderr_not_stdout(capsys, monkeypatch) -> None:
+    """起動時 CTA は stderr のみに出し、stdout（MCP の JSON-RPC チャネル）を汚さない（C3）。"""
+    import alpha_forge_mcp.server as server
+
+    monkeypatch.setattr(server.mcp, "run", lambda **kwargs: None)
+    server.main()
+    captured = capsys.readouterr()
+    assert "alforgelabs.com" in captured.err
+    assert "AlphaForge" in captured.err
+    assert "alforgelabs.com" not in captured.out  # stdout 非汚染（プロトコル安全）
+
+
 def test_serverInfoのversionが自パッケージ版と一致する() -> None:
     # issue #3: 未指定だと FastMCP がライブラリ（mcp）自身の版を返してしまう。
     from importlib.metadata import version
