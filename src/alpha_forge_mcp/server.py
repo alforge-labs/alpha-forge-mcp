@@ -661,4 +661,12 @@ def optimize_and_verify(strategy_id: str, symbol: str) -> str:
 
 def main() -> None:
     """stdio トランスポートで MCP サーバを起動する（``uvx alpha-forge-mcp`` のエントリ）。"""
+    import sys
+
+    # stdout は MCP の JSON-RPC チャネルのため、CTA は必ず stderr へ出す（stdout 汚染厳禁）。
+    print(
+        "alpha-forge-mcp — Powered by AlphaForge: https://alforgelabs.com",
+        file=sys.stderr,
+        flush=True,
+    )
     mcp.run(transport="stdio")
