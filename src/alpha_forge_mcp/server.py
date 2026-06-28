@@ -23,14 +23,20 @@ from __future__ import annotations
 import json
 from collections.abc import Callable
 from importlib.metadata import PackageNotFoundError, version
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 import anyio
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.types import ToolAnnotations
+from pydantic import Field
 
 from alpha_forge_mcp.envelope import Envelope, envelope
-from alpha_forge_mcp.forge_client import ForgeClient
+from alpha_forge_mcp.forge_client import (
+    _DATE_RE,
+    _IDENT_RE,
+    _PATH_RE,
+    ForgeClient,
+)
 from alpha_forge_mcp.forge_client import forge_status as _forge_status
 
 # issue #29: サーバ instructions でワークフロー全体像をクライアント（Claude 等）へ提示する。
@@ -68,6 +74,165 @@ OptimizeMetric = Literal[
     "win_rate_pct",
     "expectancy_pct",
     "omega_ratio",
+]
+
+# issue #37: 各引数に description / examples / pattern / minimum を付与して inputSchema へ
+# 反映させる。FastMCP(mcp>=1.27) は pydantic.Field のこれらを inputSchema.properties に
+# 載せる（本リポの mcp 1.27.2 で実機検証済み）。pattern は実行時検証（forge_client の
+# ``_validate_*`` / 同名の正規表現）と単一ソースを共有して乖離を防ぐため、forge_client の
+# 正規表現を再利用する。なお schema 制約違反は MCP 境界で（pydantic 検証として）弾かれ、
+# ``_validate_*`` は resource など直接呼び出し経路向けの多層防御として残す。
+# 型エイリアスで同種引数の重複定義を避ける（symbol / strategy_id は複数 tool で再利用）。
+SymbolArg = Annotated[
+    str,
+    Field(
+        description=(
+            "Ticker / instrument symbol. Supports exchange-specific notation "
+            "(indices, futures, FX, crypto)."
+        ),
+        examples=["AAPL", "^VIX", "CL=F", "USDJPY=X", "BTC-USD"],
+        pattern=_IDENT_RE.pattern,
+    ),
+]
+StrategyIdArg = Annotated[
+    str,
+    Field(
+        description="Registered strategy id (see list_strategies).",
+        examples=["sma_cross_v1", "cl_hmm_bb_rsi_v1"],
+        pattern=_IDENT_RE.pattern,
+    ),
+]
+OptionalStrategyIdArg = Annotated[
+    str | None,
+    Field(
+        description="Optional filter by registered strategy id (see list_strategies).",
+        examples=["sma_cross_v1"],
+        pattern=_IDENT_RE.pattern,
+    ),
+]
+ResultIdArg = Annotated[
+    str,
+    Field(
+        description="Saved result id = a strategy_id or a run_id (see list_results).",
+        examples=["sma_cross_v1", "run_a1b2c3"],
+        pattern=_IDENT_RE.pattern,
+    ),
+]
+StartDateArg = Annotated[
+    str | None,
+    Field(
+        description="Inclusive start date in YYYY-MM-DD. Defaults to the cached range start.",
+        examples=["2020-01-01"],
+        pattern=_DATE_RE.pattern,
+        json_schema_extra={"format": "date"},
+    ),
+]
+EndDateArg = Annotated[
+    str | None,
+    Field(
+        description="Inclusive end date in YYYY-MM-DD. Defaults to the cached range end.",
+        examples=["2023-12-31"],
+        pattern=_DATE_RE.pattern,
+        json_schema_extra={"format": "date"},
+    ),
+]
+TrialsArg = Annotated[
+    int | None,
+    Field(
+        description="Number of Optuna trials (>= 1). Defaults to the alpha-forge default.",
+        ge=1,
+        examples=[50],
+    ),
+]
+WindowsArg = Annotated[
+    int | None,
+    Field(
+        description="Number of walk-forward windows (>= 1). Defaults to 5.",
+        ge=1,
+        examples=[5],
+    ),
+]
+SimulationsArg = Annotated[
+    int | None,
+    Field(
+        description="Number of Monte Carlo simulations (>= 1). Defaults to 1000.",
+        ge=1,
+        examples=[1000],
+    ),
+]
+MetricArg = Annotated[
+    OptimizeMetric | None,
+    Field(
+        description=(
+            "Optimization target metric (enum; bigger is better). Defaults to sharpe_ratio."
+        ),
+    ),
+]
+PeriodArg = Annotated[
+    str | None,
+    Field(
+        description="Lookback window, e.g. 1y / 6m / 30d / max. Defaults to 1y.",
+        examples=["1y", "5y", "6m", "30d", "max"],
+    ),
+]
+JsonBodyArg = Annotated[
+    str,
+    Field(
+        description=(
+            "The full strategy-definition JSON as a string (the JSON body itself, "
+            "NOT a file path)."
+        ),
+        examples=['{"strategy_id": "my_strat", "version": "1.0.0", "timeframe": "1d"}'],
+    ),
+]
+ResultFileArg = Annotated[
+    str,
+    Field(
+        description=(
+            "Filesystem path to the optimization result JSON (the saved_path from "
+            "run_optimize(save=true)) — a path, not inline JSON."
+        ),
+        examples=["/path/to/results/optimize_sma_cross_v1.json"],
+        pattern=_PATH_RE.pattern,
+    ),
+]
+GoalArg = Annotated[
+    str | None,
+    Field(
+        description='Exploration goal name to filter by. Defaults to the "default" goal.',
+        examples=["default"],
+        pattern=_IDENT_RE.pattern,
+    ),
+]
+IndicatorArg = Annotated[
+    str,
+    Field(
+        description="Technical indicator name to look up metadata for (no price computation).",
+        examples=["RSI", "MACD"],
+        pattern=_IDENT_RE.pattern,
+    ),
+]
+SummaryArg = Annotated[
+    bool,
+    Field(
+        description=(
+            "Fold heavy arrays (trades / per-bar series) into counts to save context; "
+            "set false for the full arrays."
+        ),
+    ),
+]
+SaveArg = Annotated[
+    bool,
+    Field(
+        description=(
+            "Persist the optimization result JSON (returns saved_path for "
+            "apply_optimization); set false to skip saving."
+        ),
+    ),
+]
+WithWebhookArg = Annotated[
+    bool,
+    Field(description="Include AlphaStrike webhook alert wiring in the generated Pine Script."),
 ]
 
 # issue #3: FastMCP はコンストラクタで version を受け取れず、未設定だと低レベル
@@ -142,21 +307,21 @@ def list_strategies() -> Envelope:
 
 @mcp.tool(annotations=_READ_ONLY)
 @envelope
-def get_strategy(strategy_id: str) -> Envelope:
+def get_strategy(strategy_id: StrategyIdArg) -> Envelope:
     """Get the full JSON definition of a registered strategy by its strategy_id."""
     return _get_client().get_strategy(strategy_id)
 
 
 @mcp.tool(annotations=_READ_ONLY)
 @envelope
-def list_results(strategy_id: str | None = None) -> Envelope:
+def list_results(strategy_id: OptionalStrategyIdArg = None) -> Envelope:
     """List saved backtest results, optionally filtered by strategy_id."""
     return _get_client().list_results(strategy_id)
 
 
 @mcp.tool(annotations=_READ_ONLY)
 @envelope
-def get_result(result_id: str, summary: bool = True) -> Envelope:
+def get_result(result_id: ResultIdArg, summary: SummaryArg = True) -> Envelope:
     """Get metrics for a saved backtest result (result_id = strategy_id or run_id).
 
     summary=True (default) folds heavy arrays (trades / equity_curve / buy_hold_curve)
@@ -168,11 +333,11 @@ def get_result(result_id: str, summary: bool = True) -> Envelope:
 @mcp.tool(annotations=_RUN)
 @envelope
 async def run_backtest(
-    symbol: str,
-    strategy_id: str,
-    start: str | None = None,
-    end: str | None = None,
-    summary: bool = True,
+    symbol: SymbolArg,
+    strategy_id: StrategyIdArg,
+    start: StartDateArg = None,
+    end: EndDateArg = None,
+    summary: SummaryArg = True,
     ctx: Context | None = None,
 ) -> Envelope:
     """Run a backtest for `symbol` with a registered strategy. Optional dates are YYYY-MM-DD.
@@ -194,11 +359,11 @@ async def run_backtest(
 @mcp.tool(annotations=_RUN)
 @envelope
 async def run_optimize(
-    symbol: str,
-    strategy_id: str,
-    metric: OptimizeMetric | None = None,
-    trials: int | None = None,
-    save: bool = True,
+    symbol: SymbolArg,
+    strategy_id: StrategyIdArg,
+    metric: MetricArg = None,
+    trials: TrialsArg = None,
+    save: SaveArg = True,
     ctx: Context | None = None,
 ) -> Envelope:
     """Optimize strategy parameters with Optuna for `symbol`. metric defaults to sharpe_ratio.
@@ -218,7 +383,9 @@ async def run_optimize(
 
 @mcp.tool(annotations=_READ_ONLY)
 @envelope
-def generate_pinescript(strategy_id: str, with_webhook: bool = False) -> Envelope:
+def generate_pinescript(
+    strategy_id: StrategyIdArg, with_webhook: WithWebhookArg = False
+) -> Envelope:
     """Generate TradingView Pine Script v6 for a strategy. Returns {strategy_id, pinescript}."""
     return _get_client().generate_pinescript(strategy_id, with_webhook=with_webhook)
 
@@ -232,10 +399,10 @@ def generate_pinescript(strategy_id: str, with_webhook: bool = False) -> Envelop
 @mcp.tool(annotations=_RUN)
 @envelope
 async def run_walk_forward(
-    symbol: str,
-    strategy_id: str,
-    windows: int | None = None,
-    metric: OptimizeMetric | None = None,
+    symbol: SymbolArg,
+    strategy_id: StrategyIdArg,
+    windows: WindowsArg = None,
+    metric: MetricArg = None,
     ctx: Context | None = None,
 ) -> Envelope:
     """Run walk-forward optimization for `symbol` (out-of-sample robustness check).
@@ -256,8 +423,8 @@ async def run_walk_forward(
 @mcp.tool(annotations=_RUN)
 @envelope
 async def run_monte_carlo(
-    result_id: str,
-    simulations: int | None = None,
+    result_id: ResultIdArg,
+    simulations: SimulationsArg = None,
     ctx: Context | None = None,
 ) -> Envelope:
     """Run a Monte Carlo simulation from a saved backtest result (resamples its trades).
@@ -277,8 +444,8 @@ async def run_monte_carlo(
 @mcp.tool(annotations=_RUN)
 @envelope
 async def fetch_data(
-    symbol: str,
-    period: str | None = None,
+    symbol: SymbolArg,
+    period: PeriodArg = None,
     ctx: Context | None = None,
 ) -> Envelope:
     """Fetch & cache historical OHLCV for `symbol` (prerequisite for run_backtest).
@@ -296,7 +463,7 @@ async def fetch_data(
 
 @mcp.tool(annotations=_RUN)
 @envelope
-async def save_strategy(json_body: str, ctx: Context | None = None) -> Envelope:
+async def save_strategy(json_body: JsonBodyArg, ctx: Context | None = None) -> Envelope:
     """Register a strategy from its JSON body (not a file path; agent-friendly).
 
     Pass the full strategy-definition JSON as a string; it is validated as a JSON object
@@ -333,8 +500,8 @@ def forge_status() -> Envelope:
 @mcp.tool(annotations=_RUN)
 @envelope
 async def apply_optimization(
-    result_file: str,
-    strategy_id: str,
+    result_file: ResultFileArg,
+    strategy_id: StrategyIdArg,
     ctx: Context | None = None,
 ) -> Envelope:
     """Apply an optimization result file to a strategy, saving `<strategy_id>_optimized`.
@@ -360,14 +527,14 @@ def list_journals() -> Envelope:
 
 @mcp.tool(annotations=_READ_ONLY)
 @envelope
-def get_journal(strategy_id: str) -> Envelope:
+def get_journal(strategy_id: StrategyIdArg) -> Envelope:
     """Get the full journal (snapshots, runs, tags, notes) for a strategy_id."""
     return _get_client().get_journal(strategy_id)
 
 
 @mcp.tool(annotations=_READ_ONLY)
 @envelope
-def exploration_status(goal: str | None = None) -> Envelope:
+def exploration_status(goal: GoalArg = None) -> Envelope:
     """Show the strategy-exploration coverage map (explored vs. untried combos).
 
     Optional `goal` filters by exploration goal; defaults to the "default" goal.
@@ -377,7 +544,7 @@ def exploration_status(goal: str | None = None) -> Envelope:
 
 @mcp.tool(annotations=_READ_ONLY)
 @envelope
-def get_indicator(indicator: str) -> Envelope:
+def get_indicator(indicator: IndicatorArg) -> Envelope:
     """Get metadata for a technical indicator (description, parameters, output, example).
 
     `indicator` is the indicator name (e.g. RSI, MACD). This is metadata only — the CLI

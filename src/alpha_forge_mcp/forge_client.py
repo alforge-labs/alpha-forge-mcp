@@ -77,15 +77,22 @@ def _classify_failure(args: list[str], proc: subprocess.CompletedProcess) -> For
         except json.JSONDecodeError:
             body = None
     if isinstance(body, dict) and isinstance(body.get("code"), str):
+        # message は forge の error フィールド（要約）、detail には生 stdout JSON を残す (#38)。
         error_msg = body.get("error")
-        detail = error_msg if isinstance(error_msg, str) and error_msg else stdout
-        return ForgeError(body["code"], f"{prefix}: {detail}")
+        summary = error_msg if isinstance(error_msg, str) and error_msg else stdout
+        return ForgeError(body["code"], f"{prefix}: {summary}", detail=stdout)
 
     if any(marker in stdout or marker in stderr for marker in _FREEMIUM_MARKERS):
+        # message はマーカー（要約）に絞り、罫線を除いた本文（アップグレード URL 等）は
+        # detail へ分離する (#38)。
+        marker = next(m for m in _FREEMIUM_MARKERS if m in stdout or m in stderr)
         detail = _strip_rich_decoration(stdout or stderr)
-        return ForgeError("freemium_blocked", f"{prefix}: {detail}")
+        return ForgeError("freemium_blocked", f"{prefix}: {marker}", detail=detail)
 
-    return ForgeError("execution_failed", f"{prefix}: {stderr or stdout}")
+    # message は先頭 1 行（要約）、detail には生 stderr/stdout 全体を残す (#38)。
+    raw = stderr or stdout
+    summary = raw.splitlines()[0] if raw else ""
+    return ForgeError("execution_failed", f"{prefix}: {summary}", detail=raw or None)
 
 # 識別子（symbol / strategy_id / result_id）の許容文字。
 # 先頭は英数字または ``^``（指数: ^VIX 等）。先頭ハイフンを禁止して forge への
@@ -101,6 +108,9 @@ _MAX_PATH_LEN = 4096
 # data fetch の --period（例: 1y / 5y / 6m / 30d）または "max"。
 # 引数注入を防ぐため形式を厳密に制限する（先頭ハイフン等を弾く）。
 _PERIOD_RE = re.compile(r"^(?:max|\d+[ymwd])$", re.IGNORECASE)
+# data fetch の出力（"Fetched and saved data for AAPL (1234 lines)"）から取得件数を抽出する。
+# カンマ区切り（"12,345 lines"）にも対応。--json 非対応 CLI の散文を構造化する用途 (#38)。
+_FETCH_COUNT_RE = re.compile(r"([\d,]+)\s+lines?\b", re.IGNORECASE)
 
 
 def _find_forge_binary() -> str | None:
@@ -416,6 +426,10 @@ class ForgeClient:
         テキストのため ``_call_text`` で取得し構造化 dict に包む。非対話環境では
         ``--yes`` が無いと UsageError(exit 2) で停止するため必ず ``--yes`` を付与する。
         result_file はファイルパスのため識別子検証ではなくパス検証を行う。
+
+        #38: 生成される戦略 ID（``<strategy_id>_optimized``）を ``applied_strategy_id``
+        として構造化して返す。後続の ``generate_pinescript`` 等が散文の ``output`` を
+        文字列パースせずそのまま渡せるようにする（``_optimized`` 命名は CLI の規約）。
         """
         validated_file = _validate_result_file(result_file)
         validated_id = _validate_identifier(strategy_id)
@@ -425,6 +439,7 @@ class ForgeClient:
         return {
             "result_file": validated_file,
             "strategy_id": validated_id,
+            "applied_strategy_id": f"{validated_id}_optimized",
             "output": output,
         }
 
@@ -485,7 +500,7 @@ class ForgeClient:
             args += ["--simulations", _validate_positive_int(simulations, "simulations")]
         return self._call(args, timeout=_BACKTEST_TIMEOUT)
 
-    def fetch_data(self, symbol: str, period: str | None = None) -> dict[str, str | None]:
+    def fetch_data(self, symbol: str, period: str | None = None) -> dict[str, Any]:
         """``forge data fetch <symbol> [--period ..]``（外部市場データを取得・保存）。
 
         ``data fetch`` は ``--json`` 非対応で stdout がテキスト（"Fetched and saved
@@ -493,15 +508,21 @@ class ForgeClient:
         ``_call_text`` で取得し構造化 dict に包んで返す（#25）。``--start`` / ``--end``
         は CLI 側に存在しないため公開しない（period のみ）。外部データ取得は時間が
         かかりうるため backtest と同等のタイムアウト（``_BACKTEST_TIMEOUT``）を使う。
+
+        #38: 取得件数を散文 ``output`` から ``rows`` として構造化する（"(N lines)" を
+        パース。カンマ区切りも整数化）。文言が変わって抽出できない場合は ``rows=None``
+        とし ``output`` を必ず保持する（薄いラッパー方針＝情報を失わない）。
         """
         validated_symbol = _validate_identifier(symbol)
         args = ["data", "fetch", validated_symbol]
         if period is not None:
             args += ["--period", _validate_period(period)]
         output = self._call_text(args, timeout=_BACKTEST_TIMEOUT)
-        return {"symbol": validated_symbol, "period": period, "output": output}
+        match = _FETCH_COUNT_RE.search(output)
+        rows = int(match.group(1).replace(",", "")) if match else None
+        return {"symbol": validated_symbol, "period": period, "rows": rows, "output": output}
 
-    def save_strategy(self, json_body: str) -> dict[str, str]:
+    def save_strategy(self, json_body: str) -> dict[str, Any]:
         """``forge strategy save <tmpfile>``（戦略 JSON 本文を登録）。
 
         ``strategy save`` はファイルパス引数を取り ``--json`` 非対応のため、
@@ -509,6 +530,10 @@ class ForgeClient:
         書き出してから ``strategy save <tmpfile>`` を呼ぶ（#25）。一時ファイルは
         実行後に必ず削除する。本文は事前に JSON object として妥当か検証する
         （非 JSON / 非 object はサブプロセスに渡す前に invalid_argument で弾く）。
+
+        #38: 登録された strategy_id を散文 ``output`` に埋もれさせず構造化して返す。
+        既に検証済みの JSON 本文から読み戻す（CLI 出力のパースより堅牢）。本文に
+        ``strategy_id`` が無ければ ``None``（``output`` は常に保持する）。
         """
         try:
             parsed = json.loads(json_body)
@@ -534,7 +559,11 @@ class ForgeClient:
                 os.unlink(tmp.name)
             except OSError:
                 pass
-        return {"output": output}
+        strategy_id = parsed.get("strategy_id")
+        return {
+            "strategy_id": strategy_id if isinstance(strategy_id, str) else None,
+            "output": output,
+        }
 
     # ------------------------------------------------------------------
     # #28: journal / explore / indicator の read 系公開（書き込み系は段階追加）。

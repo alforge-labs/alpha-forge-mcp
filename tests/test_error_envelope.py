@@ -140,6 +140,20 @@ class TestErrorEnvelope:
         assert result["ok"] is False
         assert result["error"]["code"] == "freemium_blocked"
 
+    def test_ForgeErrorのdetailをenvelopeへ伝播する(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # #38: 以前は detail が常に None で死蔵していた。ForgeError.detail を
+        # error.detail として構造化伝播し、要約(message)と詳細(detail)を分離する。
+        client = _mock_client(monkeypatch)
+        client.list_strategies.side_effect = ForgeError(
+            "freemium_blocked", "有料プラン限定", detail="アップグレード: https://example.com"
+        )
+
+        result = server_mod.list_strategies()
+
+        assert result["ok"] is False
+        assert result["error"]["message"] == "有料プラン限定"
+        assert result["error"]["detail"] == "アップグレード: https://example.com"
+
     def test_想定外の例外もexecution_failedで握る(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # ForgeError 以外（バグ等）も自由文 ToolError にせず envelope に正規化し、
         # 契約（ok/error.code を必ず読める）を破らない。

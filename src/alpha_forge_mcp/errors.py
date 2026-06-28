@@ -16,12 +16,15 @@ class ForgeError(Exception):
             ``"invalid_argument"`` / ``"forge_not_found"``。これに加え、forge が
             ``--json`` の構造化エラーで返す code（``"strategy_not_found"`` /
             ``"authentication_required"`` 等）はそのまま passthrough される (#12)。
-        message: 人間可読なエラーメッセージ。
+        message: 人間可読なエラーメッセージ（要約・1 行）。
+        detail: 追加文脈となる生本文（forge stderr / freemium パネル本文など）。
+            ``message`` を要約に絞り、長い詳細はこちらへ分離する (#38)。無ければ None。
     """
 
-    def __init__(self, code: str, message: str) -> None:
+    def __init__(self, code: str, message: str, detail: str | None = None) -> None:
         self.code = code
         self.message = message
+        self.detail = detail
         super().__init__(f"[{code}] {message}")
 
 

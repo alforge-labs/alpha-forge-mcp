@@ -177,6 +177,65 @@ class TestForgeCall:
         assert exc.value.code == "bad_output"
 
 
+class TestErrorDetail:
+    """#38: _classify_failure が生 stderr/パネル本文を detail に格納し、message は要約に絞る。
+
+    意図（WHY）: 以前は detail が常に None で死蔵し、詳細（freemium パネル本文・forge
+    stderr）が全て message に連結されていた。詳細を detail へ分離することで、エージェントは
+    短い要約（message）で分岐し、必要時のみ生の詳細（detail）を参照できる。
+    """
+
+    def _client(self) -> ForgeClient:
+        return ForgeClient(forge_bin="/fake/forge")
+
+    def test_構造化エラーJSONの生本文をdetailに載せる(self) -> None:
+        body = {
+            "error": "戦略 'x' が見つかりません",
+            "code": "strategy_not_found",
+            "id": "x",
+        }
+        raw = json.dumps(body, ensure_ascii=False)
+        with patch("alpha_forge_mcp.forge_client.subprocess.run") as run:
+            run.return_value = _completed(stdout=raw, returncode=2)
+            with pytest.raises(ForgeError) as exc:
+                self._client().get_strategy("x")
+        # message は要約（error フィールド）、detail は生 stdout JSON。
+        assert "見つかりません" in exc.value.message
+        assert exc.value.detail == raw
+
+    def test_freemiumパネル本文をdetailに載せmessageは要約(self) -> None:
+        panel = (
+            "╭─ 🔒 有料プラン限定機能 ─╮\n"
+            "│ Pine Script エクスポートは有料プランのみ │\n"
+            "│ アップグレード: https://example.com      │\n"
+            "╰──────────────────────╯"
+        )
+        with patch("alpha_forge_mcp.forge_client.subprocess.run") as run:
+            run.return_value = _completed(stdout=panel, returncode=1)
+            with pytest.raises(ForgeError) as exc:
+                self._client().generate_pinescript("sma_cross_qs")
+        # message は罫線を除いた要約（マーカーを含む・本文の URL までは含めない）。
+        assert "有料プラン限定" in exc.value.message
+        for box_char in ("╭", "│", "╰", "─"):
+            assert box_char not in exc.value.message
+        # detail には実際にアクション可能な本文（アップグレード URL）が残る。
+        assert exc.value.detail is not None
+        assert "https://example.com" in exc.value.detail
+        for box_char in ("╭", "│", "╰"):
+            assert box_char not in exc.value.detail
+
+    def test_execution_failedの生stderrをdetailに載せる(self) -> None:
+        with patch("alpha_forge_mcp.forge_client.subprocess.run") as run:
+            run.return_value = _completed(
+                stderr="Traceback ...\nValueError: bad thing happened", returncode=1
+            )
+            with pytest.raises(ForgeError) as exc:
+                self._client().list_strategies()
+        assert exc.value.code == "execution_failed"
+        assert exc.value.detail is not None
+        assert "bad thing happened" in exc.value.detail
+
+
 class TestToolArgs:
     """各 tool が正しい forge コマンド列を組み立てるか（スペック検証済みコマンド）。"""
 
@@ -453,11 +512,30 @@ class TestFetchData:
                 stdout="Fetched and saved data for AAPL (1234 lines)\n"
             )
             out = ForgeClient(forge_bin="/fake/forge").fetch_data("AAPL", period="5y")
+        # issue #38: 取得件数を散文 output から構造化（rows）して返す。
         assert out == {
             "symbol": "AAPL",
             "period": "5y",
+            "rows": 1234,
             "output": "Fetched and saved data for AAPL (1234 lines)\n",
         }
+
+    def test_件数をパースできない場合rowsはNone(self) -> None:
+        # #38: CLI 文言が変わって件数を抽出できなくても output は保持し rows=None で返す。
+        with patch("alpha_forge_mcp.forge_client.subprocess.run") as run:
+            run.return_value = _completed(stdout="Done.\n")
+            out = ForgeClient(forge_bin="/fake/forge").fetch_data("AAPL")
+        assert out["rows"] is None
+        assert out["output"] == "Done.\n"
+
+    def test_カンマ区切りの件数もパースする(self) -> None:
+        # #38: 大きな件数が "12,345 lines" のように出ても整数化する。
+        with patch("alpha_forge_mcp.forge_client.subprocess.run") as run:
+            run.return_value = _completed(
+                stdout="Fetched and saved data for AAPL (12,345 lines)\n"
+            )
+            out = ForgeClient(forge_bin="/fake/forge").fetch_data("AAPL")
+        assert out["rows"] == 12345
 
     def test_不正なsymbolを拒否する(self) -> None:
         with pytest.raises(ForgeError) as exc:
@@ -510,6 +588,23 @@ class TestSaveStrategy:
             run.return_value = _completed(stdout="✅ Strategy 'sma_v1' registered\n")
             out = ForgeClient(forge_bin="/fake/forge").save_strategy(body)
         assert out["output"] == "✅ Strategy 'sma_v1' registered\n"
+
+    def test_登録strategy_idをJSON本文から構造化して返す(self) -> None:
+        # #38: 登録 ID を散文 output に埋もれさせず、検証済み本文から読み戻して返す。
+        body = json.dumps({"strategy_id": "sma_v1", "version": "1.0.0"})
+        with patch("alpha_forge_mcp.forge_client.subprocess.run") as run:
+            run.return_value = _completed(stdout="✅ Strategy 'sma_v1' registered\n")
+            out = ForgeClient(forge_bin="/fake/forge").save_strategy(body)
+        assert out["strategy_id"] == "sma_v1"
+
+    def test_strategy_id不在の本文ではNoneを返す(self) -> None:
+        # #38: 本文に strategy_id が無ければ None（output は常に保持）。
+        body = json.dumps({"name": "no id here"})
+        with patch("alpha_forge_mcp.forge_client.subprocess.run") as run:
+            run.return_value = _completed(stdout="ok\n")
+            out = ForgeClient(forge_bin="/fake/forge").save_strategy(body)
+        assert out["strategy_id"] is None
+        assert out["output"] == "ok\n"
 
 
 class TestForgeStatus:
@@ -597,11 +692,23 @@ class TestApplyOptimization:
             out = ForgeClient(forge_bin="/fake/forge").apply_optimization(
                 "/data/results/optimize_sma_v1.json", "sma_v1"
             )
+        # issue #38: 生成される `<strategy_id>_optimized` を散文 output からの
+        # 文字列パースに頼らせず applied_strategy_id として構造化する。
         assert out == {
             "result_file": "/data/results/optimize_sma_v1.json",
             "strategy_id": "sma_v1",
+            "applied_strategy_id": "sma_v1_optimized",
             "output": "✅ 適用しました: strategy_id=sma_v1_optimized\n",
         }
+
+    def test_applied_strategy_idを構造化して返す(self) -> None:
+        # #38: 後続 generate_pinescript("<id>_optimized") へ直接渡せる ID を機械可読に。
+        with patch("alpha_forge_mcp.forge_client.subprocess.run") as run:
+            run.return_value = _completed(stdout="applied\n")
+            out = ForgeClient(forge_bin="/fake/forge").apply_optimization(
+                "/data/results/optimize_cl_hmm.json", "cl_hmm"
+            )
+        assert out["applied_strategy_id"] == "cl_hmm_optimized"
 
     @pytest.mark.parametrize("bad", ["--evil", "-rf", "", "a\nb", "$(x)"])
     def test_危険なresult_fileを拒否する(self, bad) -> None:

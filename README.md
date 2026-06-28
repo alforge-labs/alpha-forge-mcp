@@ -59,6 +59,18 @@ valid optimization target without guessing. Each tool's description states its p
 (e.g. `run_backtest` needs `fetch_data` first; `apply_optimization` needs a
 `run_optimize(save=true)` result) and its follow-up.
 
+Every argument also carries an `inputSchema` **description**, plus **examples** and
+**constraints** where they help: `symbol` shows exchange notation (`AAPL`, `^VIX`, `CL=F`,
+`USDJPY=X`, `BTC-USD`), `start` / `end` advertise the `YYYY-MM-DD` pattern (`format: date`),
+`trials` / `windows` / `simulations` carry `minimum: 1`, and `save_strategy(json_body)` /
+`apply_optimization(result_file)` spell out "JSON body, not a path" vs "path, not inline
+JSON". Malformed arguments are rejected at the MCP boundary by schema validation.
+
+The text-only (non-`--json`) CLI wrappers return **structured** fields rather than only
+prose: `apply_optimization` adds `applied_strategy_id` (`<strategy_id>_optimized`, ready to
+pass to `generate_pinescript`), `save_strategy` returns the registered `strategy_id`, and
+`fetch_data` returns the fetched row count as `rows` (the raw `output` text is always kept).
+
 ### Server instructions & long-running jobs
 
 The server advertises `instructions` (surfaced in the MCP `initialize` response) describing
@@ -89,13 +101,15 @@ than raising, so an agent can branch on the failure category mechanically instea
 parsing free text:
 
 - Success: `{"ok": true, "data": { ...alpha-forge JSON... }, "error": null}`
-- Failure: `{"ok": false, "data": null, "error": {"code": "<category>", "message": "<human readable>", "detail": null}}`
+- Failure: `{"ok": false, "data": null, "error": {"code": "<category>", "message": "<summary>", "detail": "<raw context>"}}`
 
 `error.code` is the machine-readable failure category — e.g. `forge_not_found` (binary
 missing → guide setup), `authentication_required` (run `alpha-forge system auth login`),
 `freemium_blocked` (premium-only feature → stop), `strategy_not_found`, `timeout` (safe to
-retry), `bad_output`, `execution_failed`. The `outputSchema` reflects this `ok` / `data` /
-`error` shape.
+retry), `bad_output`, `execution_failed`. `error.message` is a one-line summary; `error.detail`
+carries the raw context (forge `stderr` or the de-decorated freemium panel body, including the
+upgrade URL) when there is any, otherwise `null`. The `outputSchema` reflects this `ok` /
+`data` / `error` shape.
 
 ## Resources
 
