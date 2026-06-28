@@ -55,9 +55,12 @@ exposed yet.
 The `metric` argument of `run_optimize` / `run_walk_forward` is a constrained **enum**
 (`sharpe_ratio` (default), `sortino_ratio`, `calmar_ratio`, `total_return_pct`, `cagr_pct`,
 `profit_factor`, `win_rate_pct`, `expectancy_pct`, `omega_ratio`) so clients can pick a
-valid optimization target without guessing. Each tool's description states its prerequisite
-(e.g. `run_backtest` needs `fetch_data` first; `apply_optimization` needs a
-`run_optimize(save=true)` result) and its follow-up.
+valid optimization target without guessing. This enum is **intentionally narrower** than the
+`alpha-forge` CLI's `--metric`, which accepts a wider set — it is curated to the
+bigger-is-better metrics that make sense as an optimization objective. `trials` defaults to
+`200` (the optimizer default). Each tool's description states its prerequisite (e.g.
+`run_backtest` needs `fetch_data` first; `apply_optimization` needs a `run_optimize(save=true)`
+result) and its follow-up.
 
 Every argument also carries an `inputSchema` **description**, plus **examples** and
 **constraints** where they help: `symbol` shows exchange notation (`AAPL`, `^VIX`, `CL=F`,
@@ -123,6 +126,14 @@ reference them by `@`-mention without an explicit tool call. They delegate to th
 | `forge://strategy/{strategy_id}` | One strategy definition |
 | `forge://results` | All saved backtest results |
 | `forge://result/{result_id}` | Metrics & trades of one result |
+| `forge://journals` | All strategies that have a journal |
+| `forge://journal/{strategy_id}` | Full journal (snapshots, runs, tags, notes) of one strategy |
+| `forge://exploration` | Strategy-exploration coverage map (default goal) |
+| `forge://indicator/{indicator}` | Metadata for one technical indicator |
+
+These mirror the read tools `list_journals` / `get_journal` / `exploration_status` /
+`get_indicator`. There is no `forge://indicators` collection resource because the CLI's
+indicator *list* is not wrapped as a tool/client method yet (only `get_indicator` is).
 
 ## Prompts
 

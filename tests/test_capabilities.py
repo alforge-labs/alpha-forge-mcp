@@ -98,6 +98,60 @@ class TestResources:
         assert "forge://strategy/{strategy_id}" in tmpls
         assert "forge://result/{result_id}" in tmpls
 
+    def test_journalとexplorationの静的リソースが登録される(self) -> None:
+        # #39: read 系 tool（list_journals / exploration_status）と resource を対称化する。
+        uris = _resource_uris()
+        assert "forge://journals" in uris
+        assert "forge://exploration" in uris
+
+    def test_journalとindicatorのテンプレートが登録される(self) -> None:
+        # #39: get_journal / get_indicator に対応する template resource を追加する。
+        tmpls = _template_uris()
+        assert "forge://journal/{strategy_id}" in tmpls
+        assert "forge://indicator/{indicator}" in tmpls
+
+    def test_journalsリソースはclientへ委譲しJSONを返す(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        client = MagicMock()
+        client.list_journals.return_value = {"strategies": ["s1"], "count": 1}
+        monkeypatch.setattr(server_mod, "_get_client", lambda: client)
+        contents = list(asyncio.run(mcp.read_resource("forge://journals")))
+        assert json.loads(contents[0].content)["count"] == 1
+        assert contents[0].mime_type == "application/json"
+        client.list_journals.assert_called_once_with()
+
+    def test_explorationリソースはclientへ委譲しJSONを返す(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        client = MagicMock()
+        client.exploration_status.return_value = {"goal": "default", "untried": 3}
+        monkeypatch.setattr(server_mod, "_get_client", lambda: client)
+        contents = list(asyncio.run(mcp.read_resource("forge://exploration")))
+        assert json.loads(contents[0].content)["untried"] == 3
+        # goal 省略 = CLI 側 "default" goal へフォールバック（引数なしで委譲する）。
+        client.exploration_status.assert_called_once_with()
+
+    def test_journalテンプレートはstrategy_idで委譲する(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        client = MagicMock()
+        client.get_journal.return_value = {"strategy_id": "abc", "snapshots": []}
+        monkeypatch.setattr(server_mod, "_get_client", lambda: client)
+        contents = list(asyncio.run(mcp.read_resource("forge://journal/abc")))
+        assert json.loads(contents[0].content)["strategy_id"] == "abc"
+        client.get_journal.assert_called_once_with("abc")
+
+    def test_indicatorテンプレートはindicator名で委譲する(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        client = MagicMock()
+        client.get_indicator.return_value = {"name": "RSI", "parameters": []}
+        monkeypatch.setattr(server_mod, "_get_client", lambda: client)
+        contents = list(asyncio.run(mcp.read_resource("forge://indicator/RSI")))
+        assert json.loads(contents[0].content)["name"] == "RSI"
+        client.get_indicator.assert_called_once_with("RSI")
+
     def test_strategiesリソースはclientへ委譲しJSONを返す(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
