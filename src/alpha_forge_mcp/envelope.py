@@ -30,8 +30,9 @@ class ErrorInfo(TypedDict):
     """失敗 envelope の ``error`` フィールド。
 
     - ``code``: 機械可読な失敗分類（``ForgeError.code``）。
-    - ``message``: 人間可読なメッセージ（``ForgeError.message``）。
-    - ``detail``: 追加文脈（現状は予約。常に存在し、無ければ None）。
+    - ``message``: 人間可読な要約メッセージ（``ForgeError.message``・1 行）。
+    - ``detail``: 生の追加文脈（``ForgeError.detail``: forge stderr / freemium パネル
+      本文など）。要約だけで足りる場合や詳細が無い場合は None (#38)。
     """
 
     code: str
@@ -69,9 +70,10 @@ _F = TypeVar("_F", bound=Callable[..., dict[str, Any]])
 
 
 def _to_envelope(exc: Exception) -> Envelope:
-    """例外を失敗 envelope に正規化する（ForgeError は code/message を温存）。"""
+    """例外を失敗 envelope に正規化する（ForgeError は code/message/detail を温存）。"""
     if isinstance(exc, ForgeError):
-        return error_envelope(exc.code, exc.message)
+        # #38: ForgeError.detail（生 stderr / freemium パネル本文）も構造化伝播する。
+        return error_envelope(exc.code, exc.message, exc.detail)
     # ForgeError 以外（バグ等）も自由文 ToolError にせず execution_failed に正規化。
     return error_envelope("execution_failed", str(exc))
 
