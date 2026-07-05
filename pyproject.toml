@@ -37,6 +37,7 @@ alpha-forge-mcp = "alpha_forge_mcp.server:main"
 Homepage = "https://alforge-labs.github.io/"
 Repository = "https://github.com/alforge-labs/alpha-forge-mcp"
 Issues = "https://github.com/alforge-labs/alpha-forge-mcp/issues"
+"X (Twitter)" = "https://x.com/Alforge_bot"
 
 [build-system]
 requires = ["hatchling"]

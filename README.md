@@ -3,6 +3,7 @@
 [![PyPI version](https://img.shields.io/pypi/v/alpha-forge-mcp.svg)](https://pypi.org/project/alpha-forge-mcp/)
 [![Python](https://img.shields.io/pypi/pyversions/alpha-forge-mcp.svg)](https://pypi.org/project/alpha-forge-mcp/)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+[![Follow @Alforge_bot](https://img.shields.io/badge/Follow-%40Alforge__bot-000?logo=x)](https://x.com/Alforge_bot)
 
 > **The MCP server for [AlphaForge](https://alforgelabs.com)** — the agent-native quant CLI: write strategies in JSON, optimize with Optuna TPE, validate with walk-forward, export to TradingView Pine v6. This server lets your AI agent drive the whole pipeline over MCP. → **[Try AlphaForge free](https://alforgelabs.com)**
 
