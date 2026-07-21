@@ -13,9 +13,6 @@ A [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server that ex
 **AlphaForge `alpha-forge` CLI** to AI coding agents — Claude Code, Cursor, Codex, and any
 MCP-capable client — over **stdio**.
 
-> ⚠️ **Pre-release / Alpha (`0.1.0aN`).** Tool signatures and return formats may change
-> without notice. Not recommended for production automation yet. Feedback welcome via Issues.
-
 It is a thin **open-source wrapper**: it shells out to the (commercial, closed-source)
 `alpha-forge` binary with `--json` and returns the parsed result. The MCP server itself
 contains no core logic — `alpha-forge` plus a valid license are required for anything to

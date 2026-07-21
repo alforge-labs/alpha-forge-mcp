@@ -1,6 +1,6 @@
 [project]
 name = "alpha-forge-mcp"
-version = "0.1.0a7"
+version = "1.0.0"
 description = "MCP server (stdio) exposing the AlphaForge `forge` CLI to Claude Code / Cursor / Codex"
 readme = "README.md"
 license = { text = "Apache-2.0" }
@@ -15,7 +15,7 @@ keywords = [
     "quant",
 ]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 5 - Production/Stable",
     "Environment :: Console",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: Apache Software License",
